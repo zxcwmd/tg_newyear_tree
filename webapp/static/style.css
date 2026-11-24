@@ -19,7 +19,6 @@ body {
   position: relative;
 }
 
-/* Живой фон и холст частиц */
 #bgCanvas,
 #fxCanvas {
   position: fixed;
@@ -119,7 +118,7 @@ header h1 {
   background: rgba(30, 41, 59, 0.85);
   border: 1px solid rgba(148, 163, 184, 0.15);
   border-radius: 999px;
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 600;
   color: #e2e8f0;
 }
@@ -134,7 +133,7 @@ header h1 {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   gap: 4px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   padding: 5px;
   border-radius: 16px;
 }
@@ -192,11 +191,108 @@ header h1 {
   }
 }
 
-/* Ёлка */
+/* Панель командной ёлки */
+.team-bar {
+  border-radius: 16px;
+  padding: 9px 10px;
+  margin-bottom: 10px;
+}
+
+.team-bar-top {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.tree-select {
+  flex: 1;
+  background: rgba(2, 6, 23, 0.65);
+  color: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 11px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.team-action-btn {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 11px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 3px 10px rgba(16, 185, 129, 0.3);
+}
+
+.team-share-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  gap: 8px;
+}
+
+.team-share-row.hidden {
+  display: none;
+}
+
+.team-code-label {
+  font-size: 11.5px;
+  color: #cbd5e1;
+  font-weight: 600;
+}
+
+.share-team-btn {
+  background: linear-gradient(135deg, #0ea5e9, #2563eb);
+  color: #fff;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 9px;
+  font-size: 11.5px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+/* Ёлка и переключатель сегментов (ярусов) */
 .tree-wrap {
   position: relative;
   border-radius: 20px;
   padding: 8px;
+}
+
+.segment-bar {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+  margin-bottom: 8px;
+  background: rgba(2, 6, 23, 0.6);
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.seg-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  padding: 6px 4px;
+  border-radius: 9px;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.seg-btn.active {
+  background: linear-gradient(135deg, #15803d, #166534);
+  color: #fef08a;
+  box-shadow: 0 2px 8px rgba(21, 128, 61, 0.4);
 }
 
 #treeSvg {
@@ -357,10 +453,6 @@ header h1 {
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
 }
 
-.action-btn:active {
-  transform: scale(0.98);
-}
-
 /* ВКЛАДКА ЛИДЕРБОРДА */
 .lb-header-card {
   border-radius: 18px;
@@ -397,14 +489,10 @@ header h1 {
   cursor: pointer;
 }
 
-.refresh-lb-btn:active {
-  transform: rotate(90deg);
-}
-
 .lb-subtabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
   background: rgba(2, 6, 23, 0.55);
   padding: 4px;
   border-radius: 12px;
@@ -414,9 +502,9 @@ header h1 {
   background: transparent;
   border: none;
   color: #94a3b8;
-  padding: 7px 4px;
+  padding: 7px 2px;
   border-radius: 9px;
-  font-size: 11.5px;
+  font-size: 10.5px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -490,7 +578,7 @@ header h1 {
 }
 
 .podium-score {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 800;
   color: #fde047;
 }
@@ -637,7 +725,7 @@ header h1 {
 }
 
 .c-stat b {
-  font-size: 17px;
+  font-size: 15.5px;
   color: #fde047;
 }
 
@@ -775,10 +863,6 @@ header h1 {
   box-shadow: 0 6px 18px rgba(37, 99, 235, 0.4);
 }
 
-.upgrade-btn:active {
-  transform: scale(0.98);
-}
-
 /* МАГАЗИН И ДОНАТ */
 .shop-header-card,
 .donate-header-card {
@@ -847,10 +931,6 @@ header h1 {
   font-size: 13px;
   cursor: pointer;
   box-shadow: 0 4px 12px rgba(22, 163, 74, 0.35);
-}
-
-.buy-coin-btn:active {
-  transform: scale(0.97);
 }
 
 .donate-list {
@@ -926,11 +1006,11 @@ header h1 {
   box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
 }
 
-/* Модалки */
+/* Модалки и инпуты */
 .modal {
   position: fixed;
   inset: 0;
-  background: rgba(2, 6, 23, 0.8);
+  background: rgba(2, 6, 23, 0.82);
   backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
@@ -971,6 +1051,63 @@ header h1 {
   width: 100%;
   border-radius: 12px;
   display: block;
+}
+
+.text-input {
+  width: 100%;
+  background: rgba(2, 6, 23, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  color: #fff;
+  padding: 10px 12px;
+  border-radius: 11px;
+  font-size: 13.5px;
+  margin-bottom: 10px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.divider-line {
+  text-align: center;
+  font-size: 11.5px;
+  color: #64748b;
+  margin: 6px 0 12px;
+}
+
+.join-row {
+  display: flex;
+  gap: 8px;
+}
+
+.join-row .text-input {
+  margin-bottom: 0;
+}
+
+.join-btn {
+  background: #334155;
+  color: #fff;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 11px;
+  padding: 0 16px;
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.invite-result-box {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.invite-result-box.hidden {
+  display: none;
+}
+
+.invite-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fde047;
+  margin-bottom: 8px;
 }
 
 .gram-desc {
@@ -1029,6 +1166,24 @@ header h1 {
   cursor: pointer;
 }
 
+.auto-status-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(16, 185, 129, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #6ee7b7;
+  padding: 10px 12px;
+  border-radius: 11px;
+  font-size: 12px;
+  font-weight: 700;
+  margin-top: 8px;
+}
+
+.auto-status-box.hidden {
+  display: none;
+}
+
 .gram-actions {
   display: flex;
   flex-direction: column;
@@ -1040,12 +1195,12 @@ header h1 {
   display: block;
   text-align: center;
   text-decoration: none;
-  padding: 11px;
+  padding: 12px;
   border-radius: 12px;
   background: linear-gradient(135deg, #0284c7, #2563eb);
   color: #fff;
   font-weight: 800;
-  font-size: 13px;
+  font-size: 13.5px;
 }
 
 .confirm-gram-btn {

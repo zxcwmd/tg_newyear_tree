@@ -1,4 +1,5 @@
 """Слой базы данных (SQLite + aiosqlite)."""
+import secrets
 import aiosqlite
 from datetime import datetime, timezone
 from config import DATABASE_PATH, DONATE_PACKS, ORNAMENTS
@@ -9,7 +10,17 @@ CREATE TABLE IF NOT EXISTS trees (
     chat_title TEXT,
     created_at TEXT NOT NULL,
     is_finished INTEGER NOT NULL DEFAULT 0,
-    finished_at TEXT
+    finished_at TEXT,
+    is_team INTEGER NOT NULL DEFAULT 0,
+    invite_code TEXT,
+    owner_id INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS team_members (
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    joined_at TEXT NOT NULL,
+    PRIMARY KEY (chat_id, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -18,6 +29,7 @@ CREATE TABLE IF NOT EXISTS users (
     first_name TEXT,
     last_name TEXT,
     coins INTEGER NOT NULL DEFAULT 50,
+    coin_turnover INTEGER NOT NULL DEFAULT 50,
     click_power INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL
 );
@@ -60,26 +72,28 @@ CREATE INDEX IF NOT EXISTS idx_decorations_user ON decorations(user_id);
 async def init_db():
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.executescript(SCHEMA)
-        # Безопасная миграция для существующих БД
         for col_sql in [
             "ALTER TABLE users ADD COLUMN coins INTEGER NOT NULL DEFAULT 50",
+            "ALTER TABLE users ADD COLUMN coin_turnover INTEGER NOT NULL DEFAULT 50",
             "ALTER TABLE users ADD COLUMN click_power INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE trees ADD COLUMN is_team INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE trees ADD COLUMN invite_code TEXT",
+            "ALTER TABLE trees ADD COLUMN owner_id INTEGER",
         ]:
             try:
                 await db.execute(col_sql)
             except Exception:
                 pass
-        # Объединяем игрушки из личных комнат (положительные chat_id > 1) на общую ёлку (chat_id = 1),
-        # так как групповые чаты в Telegram всегда имеют отрицательный chat_id
+        await db.execute("UPDATE users SET coin_turnover = coins WHERE coin_turnover < coins")
         await db.execute(
-            "INSERT OR IGNORE INTO trees (chat_id, chat_title, created_at) VALUES (1, 'Общая новогодняя ёлка', ?)",
+            "INSERT OR IGNORE INTO trees (chat_id, chat_title, created_at, is_team) VALUES (1, 'Общая новогодняя ёлка', ?, 0)",
             (datetime.now(timezone.utc).isoformat(),),
         )
         await db.execute("UPDATE decorations SET chat_id = 1 WHERE chat_id > 1")
         await db.commit()
 
 
-async def get_or_create_tree(chat_id: int, chat_title: str = "") -> dict:
+async def get_or_create_tree(chat_id: int, chat_title: str = "", is_team: int = 0) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -87,9 +101,10 @@ async def get_or_create_tree(chat_id: int, chat_title: str = "") -> dict:
         row = await cur.fetchone()
         if row:
             return dict(row)
+        invite_code = f"team_{secrets.token_hex(4)}" if (is_team or chat_id < 0) else None
         await db.execute(
-            "INSERT INTO trees (chat_id, chat_title, created_at) VALUES (?, ?, ?)",
-            (chat_id, chat_title, now),
+            "INSERT INTO trees (chat_id, chat_title, created_at, is_team, invite_code) VALUES (?, ?, ?, ?, ?)",
+            (chat_id, chat_title, now, 1 if (is_team or chat_id < 0) else 0, invite_code),
         )
         await db.commit()
         cur = await db.execute("SELECT * FROM trees WHERE chat_id = ?", (chat_id,))
@@ -104,6 +119,89 @@ async def get_tree(chat_id: int):
         return dict(row) if row else None
 
 
+async def create_team_tree(owner_id: int, title: str) -> dict:
+    """Создаёт новую командную ёлку и возвращает её данные вместе с invite_code."""
+    now = datetime.now(timezone.utc).isoformat()
+    clean_title = (title or "Командная ёлка друзей").strip()[:48]
+    invite_code = f"team_{secrets.token_hex(4)}"
+    # Отрицательный ID для командной ёлки
+    team_chat_id = -(900000000 + secrets.randbelow(90000000))
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute(
+            """
+            INSERT INTO trees (chat_id, chat_title, created_at, is_team, invite_code, owner_id)
+            VALUES (?, ?, ?, 1, ?, ?)
+            """,
+            (team_chat_id, clean_title, now, invite_code, owner_id),
+        )
+        await db.execute(
+            "INSERT OR IGNORE INTO team_members (chat_id, user_id, joined_at) VALUES (?, ?, ?)",
+            (team_chat_id, owner_id, now),
+        )
+        await db.commit()
+        cur = await db.execute("SELECT * FROM trees WHERE chat_id = ?", (team_chat_id,))
+        return dict(await cur.fetchone())
+
+
+async def get_tree_by_invite_code(invite_code: str) -> dict | None:
+    code = (invite_code or "").strip()
+    if not code:
+        return None
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM trees WHERE invite_code = ?", (code,))
+        row = await cur.fetchone()
+        if row:
+            return dict(row)
+        # Если передан числовой ID вида team_-912345678
+        if code.startswith("team_"):
+            rest = code[5:]
+            try:
+                cid = int(rest)
+                cur2 = await db.execute("SELECT * FROM trees WHERE chat_id = ?", (cid,))
+                r2 = await cur2.fetchone()
+                if r2:
+                    return dict(r2)
+            except Exception:
+                pass
+        return None
+
+
+async def add_team_member(chat_id: int, user_id: int):
+    if chat_id == 1:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO team_members (chat_id, user_id, joined_at) VALUES (?, ?, ?)",
+            (chat_id, user_id, now),
+        )
+        await db.commit()
+
+
+async def get_user_team_trees(user_id: int) -> list[dict]:
+    """Возвращает список всех командных ёлок, в которых состоит пользователь."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT DISTINCT t.chat_id, t.chat_title, t.invite_code, t.owner_id,
+                   (SELECT COUNT(*) FROM decorations d WHERE d.chat_id = t.chat_id) AS toys_count,
+                   (SELECT COUNT(*) FROM team_members tm WHERE tm.chat_id = t.chat_id) AS members_count
+            FROM trees t
+            LEFT JOIN team_members tm ON tm.chat_id = t.chat_id
+            LEFT JOIN decorations d ON d.chat_id = t.chat_id
+            WHERE (t.is_team = 1 OR t.chat_id < 0)
+              AND (t.owner_id = ? OR tm.user_id = ? OR d.user_id = ?)
+            ORDER BY t.created_at DESC
+            """,
+            (user_id, user_id, user_id),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
 async def upsert_user(user_id: int, username: str = "", first_name: str = "", last_name: str = "") -> dict:
     now = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -113,12 +211,11 @@ async def upsert_user(user_id: int, username: str = "", first_name: str = "", la
         if not existing:
             await db.execute(
                 """
-                INSERT INTO users (user_id, username, first_name, last_name, coins, click_power, updated_at)
-                VALUES (?, ?, ?, ?, 50, 1, ?)
+                INSERT INTO users (user_id, username, first_name, last_name, coins, coin_turnover, click_power, updated_at)
+                VALUES (?, ?, ?, ?, 50, 50, 1, ?)
                 """,
                 (user_id, username or "", first_name or "Участник", last_name or "", now),
             )
-            # Стартовый бонус: 2 шара и 1 снежинка новым игрокам
             await db.execute(
                 "INSERT OR IGNORE INTO inventory (user_id, ornament_type, quantity) VALUES (?, 'ball', 2)",
                 (user_id,),
@@ -162,14 +259,15 @@ async def get_user_profile(user_id: int) -> dict:
         for r in inv_rows:
             inventory[r["ornament_type"]] = r["quantity"]
         user_dict["inventory"] = inventory
+        user_dict["team_trees"] = await get_user_team_trees(user_id)
         return user_dict
 
 
 async def add_coins(user_id: int, amount: int) -> int:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(
-            "UPDATE users SET coins = coins + ? WHERE user_id = ?",
-            (amount, user_id),
+            "UPDATE users SET coins = coins + ?, coin_turnover = coin_turnover + ? WHERE user_id = ?",
+            (amount, max(0, amount), user_id),
         )
         await db.commit()
         cur = await db.execute("SELECT coins FROM users WHERE user_id = ?", (user_id,))
@@ -185,8 +283,8 @@ async def upgrade_click_power(user_id: int) -> tuple[bool, str, dict]:
         return False, f"Недостаточно монет (нужно {cost} 🪙)", profile
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(
-            "UPDATE users SET coins = coins - ?, click_power = click_power + 1 WHERE user_id = ?",
-            (cost, user_id),
+            "UPDATE users SET coins = coins - ?, coin_turnover = coin_turnover + ?, click_power = click_power + 1 WHERE user_id = ?",
+            (cost, cost, user_id),
         )
         await db.commit()
     updated = await get_user_profile(user_id)
@@ -202,8 +300,8 @@ async def buy_ornament(user_id: int, ornament_type: str, count: int = 1) -> tupl
         return False, f"Не хватает монет! Нужно {price} 🪙", profile
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(
-            "UPDATE users SET coins = coins - ? WHERE user_id = ?",
-            (price, user_id),
+            "UPDATE users SET coins = coins - ?, coin_turnover = coin_turnover + ? WHERE user_id = ?",
+            (price, price, user_id),
         )
         await db.execute(
             """
@@ -264,6 +362,14 @@ async def create_order(user_id: int, pack_id: str, currency: str, amount: int) -
         return cur.lastrowid
 
 
+async def get_order(order_id: int) -> dict | None:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
 async def complete_order_or_pack(user_id: int, pack_id: str, order_id: int = 0) -> dict:
     pack = DONATE_PACKS.get(pack_id)
     if not pack:
@@ -283,8 +389,14 @@ async def complete_order_or_pack(user_id: int, pack_id: str, order_id: int = 0) 
             await db.execute("UPDATE orders SET status = 'paid' WHERE id = ?", (order_id,))
 
         await db.execute(
-            "UPDATE users SET coins = coins + ?, click_power = click_power + ? WHERE user_id = ?",
-            (coins_bonus, power_bonus, user_id),
+            """
+            UPDATE users SET
+                coins = coins + ?,
+                coin_turnover = coin_turnover + ?,
+                click_power = click_power + ?
+            WHERE user_id = ?
+            """,
+            (coins_bonus, coins_bonus, power_bonus, user_id),
         )
         for otype, qty in items.items():
             if qty > 0:
@@ -304,6 +416,11 @@ async def complete_order_or_pack(user_id: int, pack_id: str, order_id: int = 0) 
 async def add_decoration(chat_id: int, user_id: int, ornament_type: str, color: str, x: float, y: float) -> int:
     now = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DATABASE_PATH) as db:
+        if chat_id < 0:
+            await db.execute(
+                "INSERT OR IGNORE INTO team_members (chat_id, user_id, joined_at) VALUES (?, ?, ?)",
+                (chat_id, user_id, now),
+            )
         cur = await db.execute(
             """
             INSERT INTO decorations (chat_id, user_id, ornament_type, color, x, y, created_at)
@@ -313,14 +430,6 @@ async def add_decoration(chat_id: int, user_id: int, ornament_type: str, color: 
         )
         await db.commit()
         return cur.lastrowid
-
-
-async def get_decoration_by_id(decoration_id: int):
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT * FROM decorations WHERE id = ?", (decoration_id,))
-        row = await cur.fetchone()
-        return dict(row) if row else None
 
 
 async def get_decorations(chat_id: int) -> list[dict]:
@@ -370,6 +479,7 @@ async def sync_backup(
     chat_id: int,
     user_id: int,
     coins: int | None,
+    coin_turnover: int | None,
     click_power: int | None,
     inventory: dict | None,
     decorations: list[dict] | None,
@@ -378,15 +488,19 @@ async def sync_backup(
     now = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
-        if coins is not None or click_power is not None:
-            cur = await db.execute("SELECT coins, click_power FROM users WHERE user_id = ?", (user_id,))
+        if coins is not None or click_power is not None or coin_turnover is not None:
+            cur = await db.execute(
+                "SELECT coins, coin_turnover, click_power FROM users WHERE user_id = ?",
+                (user_id,),
+            )
             u = await cur.fetchone()
             if u:
                 new_coins = max(int(u["coins"]), int(coins or 0))
+                new_turnover = max(int(u["coin_turnover"]), int(coin_turnover or 0), new_coins)
                 new_power = max(int(u["click_power"]), int(click_power or 1))
                 await db.execute(
-                    "UPDATE users SET coins = ?, click_power = ?, updated_at = ? WHERE user_id = ?",
-                    (new_coins, new_power, now, user_id),
+                    "UPDATE users SET coins = ?, coin_turnover = ?, click_power = ?, updated_at = ? WHERE user_id = ?",
+                    (new_coins, new_turnover, new_power, now, user_id),
                 )
         if inventory and isinstance(inventory, dict):
             for otype, qty in inventory.items():
@@ -407,7 +521,6 @@ async def sync_backup(
                             """,
                             (user_id, otype, qty),
                         )
-        # Если в БД для этого игрока на этой ёлке 0 игрушек, а в его бэкапе они есть — восстанавливаем его игрушки
         if decorations and isinstance(decorations, list):
             cur = await db.execute(
                 "SELECT COUNT(*) AS cnt FROM decorations WHERE chat_id = ? AND user_id = ?",
@@ -441,12 +554,13 @@ async def get_stats(chat_id: int) -> list[dict]:
                    COALESCE(u.username, '') AS username,
                    COALESCE(u.first_name, 'Участник') AS first_name,
                    COALESCE(u.coins, 0) AS coins,
+                   COALESCE(u.coin_turnover, COALESCE(u.coins, 0)) AS coin_turnover,
                    COUNT(d.id) AS count
             FROM decorations d
             LEFT JOIN users u ON u.user_id = d.user_id
             WHERE d.chat_id = ?
             GROUP BY d.user_id
-            ORDER BY count DESC, coins DESC
+            ORDER BY count DESC, coin_turnover DESC
             """,
             (chat_id,),
         )
@@ -454,8 +568,33 @@ async def get_stats(chat_id: int) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+async def get_team_trees_leaderboard() -> list[dict]:
+    """Возвращает рейтинг всех командных ёлок (где is_team = 1 или групповой чат chat_id < 0)."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT t.chat_id,
+                   COALESCE(t.chat_title, 'Командная ёлка') AS chat_title,
+                   t.invite_code,
+                   t.owner_id,
+                   COUNT(DISTINCT d.id) AS count,
+                   COUNT(DISTINCT COALESCE(tm.user_id, d.user_id)) AS members_count
+            FROM trees t
+            LEFT JOIN decorations d ON d.chat_id = t.chat_id
+            LEFT JOIN team_members tm ON tm.chat_id = t.chat_id
+            WHERE t.is_team = 1 OR t.chat_id < 0
+            GROUP BY t.chat_id
+            ORDER BY count DESC, members_count DESC, t.created_at ASC
+            LIMIT 50
+            """
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
 async def get_global_leaderboard() -> dict:
-    """Возвращает общий рейтинг всех игроков бота (по наряженным игрушкам и по монетам)."""
+    """Возвращает общий рейтинг всех игроков бота (по игрушкам, по обороту монет и командные ёлки)."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur_toys = await db.execute(
@@ -464,37 +603,43 @@ async def get_global_leaderboard() -> dict:
                    COALESCE(u.username, '') AS username,
                    COALESCE(u.first_name, 'Игрок') AS first_name,
                    COALESCE(u.coins, 0) AS coins,
+                   COALESCE(u.coin_turnover, COALESCE(u.coins, 0)) AS coin_turnover,
                    COALESCE(u.click_power, 1) AS click_power,
                    COUNT(d.id) AS count
             FROM users u
             LEFT JOIN decorations d ON d.user_id = u.user_id
             GROUP BY u.user_id
-            ORDER BY count DESC, u.coins DESC
+            ORDER BY count DESC, coin_turnover DESC
             LIMIT 50
             """
         )
         by_toys = [dict(r) for r in await cur_toys.fetchall()]
 
-        cur_coins = await db.execute(
+        cur_turnover = await db.execute(
             """
             SELECT u.user_id,
                    COALESCE(u.username, '') AS username,
                    COALESCE(u.first_name, 'Игрок') AS first_name,
                    COALESCE(u.coins, 0) AS coins,
+                   COALESCE(u.coin_turnover, COALESCE(u.coins, 0)) AS coin_turnover,
                    COALESCE(u.click_power, 1) AS click_power,
                    COUNT(d.id) AS count
             FROM users u
             LEFT JOIN decorations d ON d.user_id = u.user_id
             GROUP BY u.user_id
-            ORDER BY u.coins DESC, count DESC
+            ORDER BY coin_turnover DESC, count DESC
             LIMIT 50
             """
         )
-        by_coins = [dict(r) for r in await cur_coins.fetchall()]
-        return {
-            "by_toys": by_toys,
-            "by_coins": by_coins,
-        }
+        by_turnover = [dict(r) for r in await cur_turnover.fetchall()]
+
+    team_trees = await get_team_trees_leaderboard()
+    return {
+        "by_toys": by_toys,
+        "by_turnover": by_turnover,
+        "by_coins": by_turnover,
+        "team_trees": team_trees,
+    }
 
 
 async def get_unfinished_trees() -> list[dict]:

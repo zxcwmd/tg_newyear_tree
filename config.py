@@ -114,7 +114,7 @@ ORNAMENTS = {
     },
 }
 
-# Донат-наборы за Telegram Stars (XTR) и криптовалюту GRAM
+# Донат-наборы за Telegram Stars (XTR) и криптовалюту GRAM (цены в GRAM снижены в 5 раз)
 DONATE_PACKS = {
     "coins_small": {
         "id": "coins_small",
@@ -122,7 +122,7 @@ DONATE_PACKS = {
         "emoji": "🪙",
         "description": "+500 новогодних монет для покупки игрушек",
         "stars_price": 15,
-        "gram_price": 5,
+        "gram_price": 1,
         "rewards": {
             "coins": 500,
             "items": {},
@@ -135,7 +135,7 @@ DONATE_PACKS = {
         "emoji": "💰",
         "description": "+2 500 новогодних монет и +1 к силе клика",
         "stars_price": 50,
-        "gram_price": 15,
+        "gram_price": 3,
         "rewards": {
             "coins": 2500,
             "items": {},
@@ -148,7 +148,7 @@ DONATE_PACKS = {
         "emoji": "💎",
         "description": "+10 000 монет и +3 к силе клика",
         "stars_price": 150,
-        "gram_price": 45,
+        "gram_price": 9,
         "rewards": {
             "coins": 10000,
             "items": {},
@@ -161,7 +161,7 @@ DONATE_PACKS = {
         "emoji": "🎁",
         "description": "3 Шара, 2 Конфеты, 2 Снежинки, 2 Подарка и 1 Звезда",
         "stars_price": 35,
-        "gram_price": 10,
+        "gram_price": 2,
         "rewards": {
             "coins": 100,
             "items": {
@@ -180,7 +180,7 @@ DONATE_PACKS = {
         "emoji": "👑",
         "description": "По 5 игрушек каждого вида + 3 000 монет + Сила клика +2",
         "stars_price": 100,
-        "gram_price": 30,
+        "gram_price": 6,
         "rewards": {
             "coins": 3000,
             "items": {

@@ -1,4 +1,4 @@
-"""FastAPI сервер для Mini App: отдаёт статику, API, кликер, магазин и донат (Stars / GRAM)."""
+"""FastAPI сервер для Mini App: отдаёт статику, API, кликер, командные ёлки, магазин и донат."""
 import asyncio
 from contextlib import asynccontextmanager
 import hashlib
@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import bot as bot_module
-from config import BOT_TOKEN, DONATE_PACKS, GRAM_WALLET_ADDRESS, ORNAMENTS
+from config import BOT_TOKEN, DONATE_PACKS, GRAM_WALLET_ADDRESS, ORNAMENTS, WEBAPP_URL
 import database as db
 from tree_image import generate_tree_image
 
@@ -70,7 +70,6 @@ async def no_cache_api_middleware(request: Request, call_next):
 
 
 def validate_init_data(init_data: str) -> dict:
-    """Проверяет подпись Telegram initData. Возвращает словарь полей."""
     if not init_data:
         return {}
     if not BOT_TOKEN:
@@ -100,7 +99,6 @@ def resolve_user(init_data: str = "", fallback_user: dict | None = None) -> dict
                 return parsed
         except Exception:
             pass
-    # Если подпись не совпала (например, прокси/тест), пробуем распарсить user из init_data напрямую
     if init_data:
         try:
             raw_fields = dict(parse_qsl(init_data))
@@ -172,9 +170,22 @@ class DonateOrderRequest(BaseModel):
     user: UserInfoModel | None = None
 
 
+class CreateTeamTreeRequest(BaseModel):
+    title: str
+    init_data: str = ""
+    user: UserInfoModel | None = None
+
+
+class JoinTeamTreeRequest(BaseModel):
+    invite_code: str
+    init_data: str = ""
+    user: UserInfoModel | None = None
+
+
 class SyncBackupRequest(BaseModel):
     chat_id: int
     coins: int | None = None
+    coin_turnover: int | None = None
     click_power: int | None = None
     inventory: dict | None = None
     decorations: list[dict] | None = None
@@ -196,7 +207,7 @@ async def _ensure_user_from_req(init_data: str, user_model: UserInfoModel | None
 
 
 def normalize_chat_id(chat_id: int) -> int:
-    """Групповые чаты в Telegram имеют отрицательный ID (< 0). Все одиночные положительные ID (> 1) объединяем в общую ёлку (1)."""
+    """Групповые и командные ёлки имеют отрицательный ID (< 0). Одиночные положительные ID (> 1) объединяем в общую ёлку (1)."""
     return 1 if chat_id > 1 else chat_id
 
 
@@ -204,11 +215,10 @@ def is_inside_tree(x_pct: float, y_pct: float) -> bool:
     """Проверяет, попадает ли точка (0..100, 0..100) внутрь кроны одного из 3 ярусов ёлки."""
     sx = x_pct * 4.0  # 0..400
     sy = y_pct * 5.0  # 0..500
-    # 3 яруса ёлки: (y_top, y_bottom, top_half_w, bottom_half_w)
     tiers = [
-        (64.0, 215.0, 8.0, 74.0),
-        (150.0, 325.0, 14.0, 94.0),
-        (240.0, 428.0, 18.0, 118.0),
+        (60.0, 216.0, 8.0, 76.0),
+        (146.0, 326.0, 14.0, 96.0),
+        (236.0, 430.0, 18.0, 120.0),
     ]
     for y_top, y_bot, hw_top, hw_bot in tiers:
         if y_top <= sy <= y_bot:
@@ -222,11 +232,11 @@ def is_inside_tree(x_pct: float, y_pct: float) -> bool:
 def clamp_to_tree(x_pct: float, y_pct: float) -> tuple[float, float]:
     """Притягивает координаты внутрь кроны ёлки (для перетаскивания)."""
     sx = x_pct * 4.0
-    sy = max(68.0, min(424.0, y_pct * 5.0))
+    sy = max(64.0, min(426.0, y_pct * 5.0))
     tiers = [
-        (64.0, 215.0, 8.0, 72.0),
-        (150.0, 325.0, 14.0, 92.0),
-        (240.0, 428.0, 18.0, 115.0),
+        (60.0, 216.0, 8.0, 74.0),
+        (146.0, 326.0, 14.0, 94.0),
+        (236.0, 430.0, 18.0, 118.0),
     ]
     allowed_hw = 20.0
     for y_top, y_bot, hw_top, hw_bot in tiers:
@@ -262,7 +272,9 @@ async def get_leaderboard_endpoint(chat_id: int = Query(default=1)):
     return {
         "chat_stats": chat_stats,
         "by_toys": global_lb["by_toys"],
-        "by_coins": global_lb["by_coins"],
+        "by_turnover": global_lb["by_turnover"],
+        "by_coins": global_lb["by_turnover"],
+        "team_trees": global_lb["team_trees"],
     }
 
 
@@ -272,17 +284,29 @@ async def get_tree(
     user_id: int = Query(default=1),
     username: str = Query(default=""),
     first_name: str = Query(default="Игрок"),
+    invite_code: str = Query(default=""),
 ):
+    await db.upsert_user(user_id, username=username, first_name=first_name)
+
+    # Если передан invite_code командной ёлки — присоединяем игрока и открываем эту командную ёлку
+    if invite_code:
+        invited_tree = await db.get_tree_by_invite_code(invite_code)
+        if invited_tree:
+            chat_id = invited_tree["chat_id"]
+
     cid = normalize_chat_id(chat_id)
     tree = await db.get_tree(cid)
     if not tree:
-        default_title = "Общая новогодняя ёлка" if cid == 1 else f"Чат #{cid}"
-        tree = await db.get_or_create_tree(cid, default_title)
-    await db.upsert_user(user_id, username=username, first_name=first_name)
+        default_title = "Общая новогодняя ёлка" if cid == 1 else f"Командная ёлка #{abs(cid) % 10000}"
+        tree = await db.get_or_create_tree(cid, default_title, is_team=1 if cid < 0 else 0)
+    if cid < 0:
+        await db.add_team_member(cid, user_id)
+
     profile = await db.get_user_profile(user_id)
     decorations = await db.get_decorations(cid)
     stats = await db.get_stats(cid)
     leaderboard = await db.get_global_leaderboard()
+    bot_uname = await bot_module.get_bot_username()
     return {
         "tree": tree,
         "decorations": decorations,
@@ -291,6 +315,51 @@ async def get_tree(
         "ornaments": ORNAMENTS,
         "donate_packs": DONATE_PACKS,
         "gram_wallet": GRAM_WALLET_ADDRESS,
+        "profile": profile,
+        "bot_username": bot_uname,
+        "webapp_url": WEBAPP_URL,
+    }
+
+
+@app.post("/api/team/create")
+async def create_team_tree_endpoint(req: CreateTeamTreeRequest):
+    uid = await _ensure_user_from_req(req.init_data, req.user)
+    title = (req.title or "").strip()
+    if len(title) < 2:
+        raise HTTPException(400, "Введи название командной ёлки (минимум 2 символа)")
+    team_tree = await db.create_team_tree(uid, title)
+    profile = await db.get_user_profile(uid)
+    bot_uname = await bot_module.get_bot_username()
+    code = team_tree["invite_code"]
+    bot_link = f"https://t.me/{bot_uname}?start={code}" if bot_uname else f"{WEBAPP_URL}/?invite={code}"
+    web_link = f"{WEBAPP_URL}/?chat_id={team_tree['chat_id']}&invite={code}"
+    return {
+        "ok": True,
+        "tree": team_tree,
+        "invite_code": code,
+        "bot_invite_url": bot_link,
+        "web_invite_url": web_link,
+        "profile": profile,
+    }
+
+
+@app.post("/api/team/join")
+async def join_team_tree_endpoint(req: JoinTeamTreeRequest):
+    uid = await _ensure_user_from_req(req.init_data, req.user)
+    code = (req.invite_code or "").strip()
+    # Извлекаем код, если вставили полную ссылку
+    if "invite=" in code:
+        code = code.split("invite=")[-1].split("&")[0]
+    elif "start=" in code:
+        code = code.split("start=")[-1].split("&")[0]
+    team_tree = await db.get_tree_by_invite_code(code)
+    if not team_tree:
+        raise HTTPException(404, "Командная ёлка по этому коду/ссылке не найдена")
+    await db.add_team_member(team_tree["chat_id"], uid)
+    profile = await db.get_user_profile(uid)
+    return {
+        "ok": True,
+        "tree": team_tree,
         "profile": profile,
     }
 
@@ -301,12 +370,13 @@ async def sync_backup_endpoint(req: SyncBackupRequest):
     cid = normalize_chat_id(req.chat_id)
     tree = await db.get_tree(cid)
     if not tree:
-        default_title = "Общая новогодняя ёлка" if cid == 1 else f"Чат #{cid}"
-        await db.get_or_create_tree(cid, default_title)
+        default_title = "Общая новогодняя ёлка" if cid == 1 else f"Командная ёлка #{abs(cid) % 10000}"
+        await db.get_or_create_tree(cid, default_title, is_team=1 if cid < 0 else 0)
     await db.sync_backup(
         chat_id=cid,
         user_id=uid,
         coins=req.coins,
+        coin_turnover=req.coin_turnover,
         click_power=req.click_power,
         inventory=req.inventory,
         decorations=req.decorations,
@@ -379,6 +449,25 @@ async def create_stars_invoice(req: DonateOrderRequest):
     }
 
 
+@app.post("/api/donate/gram-order")
+async def create_gram_order(req: DonateOrderRequest):
+    """Создаёт заказ в GRAM для последующей автоматической выдачи сразу после оплаты."""
+    uid = await _ensure_user_from_req(req.init_data, req.user)
+    pack = DONATE_PACKS.get(req.pack_id)
+    if not pack:
+        raise HTTPException(404, "Набор не найден")
+    order_id = await db.create_order(uid, req.pack_id, "GRAM", int(pack["gram_price"]))
+    memo = f"NYTREE_{order_id}_{uid}"
+    return {
+        "ok": True,
+        "order_id": order_id,
+        "memo": memo,
+        "gram_price": pack["gram_price"],
+        "wallet": GRAM_WALLET_ADDRESS,
+        "pack": pack,
+    }
+
+
 @app.post("/api/donate/claim")
 async def claim_donate_pack(req: DonateOrderRequest):
     uid = await _ensure_user_from_req(req.init_data, req.user)
@@ -392,7 +481,7 @@ async def claim_donate_pack(req: DonateOrderRequest):
     profile = await db.complete_order_or_pack(uid, req.pack_id, order_id)
     return {
         "ok": True,
-        "message": f"Набор «{pack['title']}» успешно начислен! 🎉",
+        "message": f"Набор «{pack['title']}» автоматически выдан! 🎉",
         "profile": profile,
     }
 
@@ -402,8 +491,8 @@ async def decorate(req: DecorateRequest):
     cid = normalize_chat_id(req.chat_id)
     tree = await db.get_tree(cid)
     if not tree:
-        default_title = "Общая новогодняя ёлка" if cid == 1 else f"Чат #{cid}"
-        tree = await db.get_or_create_tree(cid, default_title)
+        default_title = "Общая новогодняя ёлка" if cid == 1 else f"Командная ёлка #{abs(cid) % 10000}"
+        tree = await db.get_or_create_tree(cid, default_title, is_team=1 if cid < 0 else 0)
     if tree.get("is_finished"):
         raise HTTPException(400, "Ёлка уже подведена! Ивент завершён 🎉")
     if req.ornament_type not in ORNAMENTS:
