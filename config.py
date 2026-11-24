@@ -6,21 +6,23 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+# Адрес кошелька TON/GRAM для приёма донатов в GRAM (можно задать в Environment Variables)
+GRAM_WALLET_ADDRESS = os.getenv(
+    "GRAM_WALLET_ADDRESS",
+    "UQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJKZ",
+).strip()
 
 
 def _detect_webapp_url() -> str:
     explicit = os.getenv("WEBAPP_URL", "").strip().rstrip("/")
     if explicit and explicit != "https://your-domain.example.com":
         return explicit
-    # Автоопределение на Render.com
     render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
     if render_url:
         return render_url
-    # Автоопределение на Koyeb
     koyeb_domain = os.getenv("KOYEB_PUBLIC_DOMAIN", "").strip().rstrip("/")
     if koyeb_domain:
         return f"https://{koyeb_domain}"
-    # Автоопределение на Railway
     railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip().rstrip("/")
     if railway_domain:
         return f"https://{railway_domain}"
@@ -29,7 +31,6 @@ def _detect_webapp_url() -> str:
 
 WEBAPP_URL = _detect_webapp_url()
 
-# Поддержка переменных окружения Render, Koyeb, Alwaysdata и локального запуска
 WEBAPP_HOST = os.getenv(
     "IP",
     os.getenv("ALWAYSDATA_HTTPD_IP", os.getenv("WEBAPP_HOST", "0.0.0.0")),
@@ -50,11 +51,12 @@ DATABASE_PATH = (
 
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
 
-# Типы игрушек и их цвета
+# Типы игрушек, их цвета и цена в монетах
 ORNAMENTS = {
     "ball": {
         "name": "Шар",
         "emoji": "🔴",
+        "price": 25,
         "colors": {
             "red": "#e63946",
             "gold": "#f4a261",
@@ -64,25 +66,36 @@ ORNAMENTS = {
             "silver": "#adb5bd",
         },
     },
-    "star": {
-        "name": "Звезда",
-        "emoji": "⭐",
+    "candy": {
+        "name": "Конфета",
+        "emoji": "🍬",
+        "price": 40,
         "colors": {
-            "gold": "#ffd60a",
-            "silver": "#e9ecef",
+            "red": "#e63946",
+            "pink": "#ff6b9d",
         },
     },
     "snowflake": {
         "name": "Снежинка",
         "emoji": "❄️",
+        "price": 60,
         "colors": {
             "white": "#ffffff",
             "blue": "#a8dadc",
         },
     },
+    "bell": {
+        "name": "Колокольчик",
+        "emoji": "🔔",
+        "price": 85,
+        "colors": {
+            "gold": "#ffd60a",
+        },
+    },
     "gift": {
         "name": "Подарок",
         "emoji": "🎁",
+        "price": 120,
         "colors": {
             "red": "#e63946",
             "blue": "#4361ee",
@@ -90,19 +103,95 @@ ORNAMENTS = {
             "purple": "#9d4edd",
         },
     },
-    "bell": {
-        "name": "Колокольчик",
-        "emoji": "🔔",
+    "star": {
+        "name": "Звезда",
+        "emoji": "⭐",
+        "price": 200,
         "colors": {
             "gold": "#ffd60a",
+            "silver": "#e9ecef",
         },
     },
-    "candy": {
-        "name": "Конфета",
-        "emoji": "🍬",
-        "colors": {
-            "red": "#e63946",
-            "pink": "#ff6b9d",
+}
+
+# Донат-наборы за Telegram Stars (XTR) и криптовалюту GRAM
+DONATE_PACKS = {
+    "coins_small": {
+        "id": "coins_small",
+        "title": "Горсть монет",
+        "emoji": "🪙",
+        "description": "+500 новогодних монет для покупки игрушек",
+        "stars_price": 15,
+        "gram_price": 5,
+        "rewards": {
+            "coins": 500,
+            "items": {},
+            "click_power_bonus": 0,
+        },
+    },
+    "coins_medium": {
+        "id": "coins_medium",
+        "title": "Мешок монет",
+        "emoji": "💰",
+        "description": "+2 500 новогодних монет и +1 к силе клика",
+        "stars_price": 50,
+        "gram_price": 15,
+        "rewards": {
+            "coins": 2500,
+            "items": {},
+            "click_power_bonus": 1,
+        },
+    },
+    "coins_mega": {
+        "id": "coins_mega",
+        "title": "Сундук Деда Мороза",
+        "emoji": "💎",
+        "description": "+10 000 монет и +3 к силе клика",
+        "stars_price": 150,
+        "gram_price": 45,
+        "rewards": {
+            "coins": 10000,
+            "items": {},
+            "click_power_bonus": 3,
+        },
+    },
+    "toys_pack": {
+        "id": "toys_pack",
+        "title": "Праздничный набор игрушек",
+        "emoji": "🎁",
+        "description": "3 Шара, 2 Конфеты, 2 Снежинки, 2 Подарка и 1 Звезда",
+        "stars_price": 35,
+        "gram_price": 10,
+        "rewards": {
+            "coins": 100,
+            "items": {
+                "ball": 3,
+                "candy": 2,
+                "snowflake": 2,
+                "gift": 2,
+                "star": 1,
+            },
+            "click_power_bonus": 0,
+        },
+    },
+    "royal_pack": {
+        "id": "royal_pack",
+        "title": "Королевский набор",
+        "emoji": "👑",
+        "description": "По 5 игрушек каждого вида + 3 000 монет + Сила клика +2",
+        "stars_price": 100,
+        "gram_price": 30,
+        "rewards": {
+            "coins": 3000,
+            "items": {
+                "ball": 5,
+                "candy": 5,
+                "snowflake": 5,
+                "bell": 5,
+                "gift": 5,
+                "star": 5,
+            },
+            "click_power_bonus": 2,
         },
     },
 }
