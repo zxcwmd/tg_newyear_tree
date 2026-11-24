@@ -6,9 +6,30 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-WEBAPP_URL = os.getenv("WEBAPP_URL", "http://localhost:8000").strip().rstrip("/")
 
-# Поддержка переменных окружения Alwaysdata (IP / PORT / ALWAYSDATA_HTTPD_*), Render и локального запуска
+
+def _detect_webapp_url() -> str:
+    explicit = os.getenv("WEBAPP_URL", "").strip().rstrip("/")
+    if explicit and explicit != "https://your-domain.example.com":
+        return explicit
+    # Автоопределение на Render.com
+    render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+    if render_url:
+        return render_url
+    # Автоопределение на Koyeb
+    koyeb_domain = os.getenv("KOYEB_PUBLIC_DOMAIN", "").strip().rstrip("/")
+    if koyeb_domain:
+        return f"https://{koyeb_domain}"
+    # Автоопределение на Railway
+    railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip().rstrip("/")
+    if railway_domain:
+        return f"https://{railway_domain}"
+    return "http://localhost:8000"
+
+
+WEBAPP_URL = _detect_webapp_url()
+
+# Поддержка переменных окружения Render, Koyeb, Alwaysdata и локального запуска
 WEBAPP_HOST = os.getenv(
     "IP",
     os.getenv("ALWAYSDATA_HTTPD_IP", os.getenv("WEBAPP_HOST", "0.0.0.0")),
