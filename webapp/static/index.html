@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Новогодняя ёлка 🎄</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>🎄 Новогодняя ёлка</h1>
+    <p id="chatTitle" class="subtitle">Загрузка...</p>
+    <div class="badges">
+      <div id="counter" class="counter">Игрушек: 0</div>
+      <div id="countdown" class="counter countdown">⏳ До 1 января: ...</div>
+    </div>
+  </header>
+
+  <div id="treeWrap" class="tree-wrap">
+    <svg id="treeSvg" viewBox="0 0 400 500" preserveAspectRatio="xMidYMid meet">
+      <!-- Фон -->
+      <rect width="400" height="500" fill="#0f172a" rx="16"/>
+      <!-- Снег -->
+      <g id="snow"></g>
+      <!-- Сугробы внизу -->
+      <ellipse cx="120" cy="465" rx="140" ry="28" fill="#e2e8f0" opacity="0.9"/>
+      <ellipse cx="290" cy="470" rx="130" ry="25" fill="#f8fafc" opacity="0.95"/>
+      <!-- Ствол -->
+      <rect x="185" y="410" width="30" height="48" fill="#654321" rx="4"/>
+      <!-- Ярусы -->
+      <polygon points="200,240 80,430 320,430" fill="#166534"/>
+      <polygon points="200,150 110,320 290,320" fill="#15803d"/>
+      <polygon points="200,60 130,210 270,210" fill="#166534"/>
+      <!-- Гирлянда -->
+      <path d="M 145,180 Q 200,205 255,175" fill="none" stroke="#fde047" stroke-width="2" stroke-dasharray="4 6" opacity="0.7"/>
+      <path d="M 122,285 Q 200,315 278,280" fill="none" stroke="#fde047" stroke-width="2" stroke-dasharray="4 6" opacity="0.7"/>
+      <path d="M 96,390 Q 200,425 304,385" fill="none" stroke="#fde047" stroke-width="2" stroke-dasharray="4 6" opacity="0.7"/>
+      <!-- Звезда -->
+      <g id="topStar"></g>
+      <!-- Игрушки -->
+      <g id="decorLayer"></g>
+    </svg>
+    <div id="hint" class="hint">Выбери игрушку внизу и нажми на ёлку (свои игрушки можно перетаскивать) 👇</div>
+  </div>
+
+  <div id="palette" class="palette"></div>
+
+  <div class="actions-bar">
+    <button id="previewBtn" class="action-btn">🖼 Посмотреть итоговую открытку</button>
+  </div>
+
+  <div id="statsBox" class="stats-box">
+    <h3>🏆 Кто сколько повесил</h3>
+    <ul id="statsList"></ul>
+  </div>
+
+  <div id="previewModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span>🎄 Открытка для чата (1 января)</span>
+        <button id="closeModalBtn" class="close-btn">✕</button>
+      </div>
+      <img id="previewImg" alt="Итоговая ёлка" />
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>
