@@ -189,14 +189,18 @@ async def scheduler(bot: Bot):
             log.exception("Scheduler error: %s", e)
 
 
-async def main():
+async def main(handle_signals: bool = True):
     if not BOT_TOKEN:
         raise SystemExit("❌ BOT_TOKEN не задан! Создай .env по образцу .env.example")
     await db.init_db()
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    asyncio.create_task(scheduler(bot))
+    sched_task = asyncio.create_task(scheduler(bot))
     log.info("Bot started. WebApp URL: %s", WEBAPP_URL)
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot, handle_signals=handle_signals)
+    finally:
+        sched_task.cancel()
+        await bot.session.close()
 
 
 if __name__ == "__main__":

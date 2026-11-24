@@ -63,7 +63,42 @@ SQLite (`data.db`), таблицы:
 - `users` — участники
 - `decorations` — игрушки с координатами (x, y в % от размера ёлки)
 
-## Деплой на сервер
+## Деплой на Alwaysdata (бесплатно, с постоянной БД и HTTPS)
+
+1. Зарегистрируйся на [alwaysdata.com](https://www.alwaysdata.com/) (тариф Free — 100 МБ).
+2. В панели управления включи SSH: **Remote access → SSH** (задай пароль для своего SSH-пользователя или используй **Web SSH** прямо в браузере).
+3. Подключись по SSH и выполни:
+   ```bash
+   git clone https://github.com/zxcwmd/tg_newyear_tree.git
+   cd tg_newyear_tree
+   python3 -m venv venv
+   ./venv/bin/pip install -r requirements.txt
+   cp .env.example .env
+   nano .env
+   ```
+   В `.env` укажи:
+   ```env
+   BOT_TOKEN=твой_токен_от_BotFather
+   WEBAPP_URL=https://ИМЯ_АККАУНТА.alwaysdata.net
+   TIMEZONE=Europe/Moscow
+   ```
+4. В панели Alwaysdata открой **Web → Sites** и нажми редактировать (⚙️) у своего сайта `ИМЯ_АККАУНТА.alwaysdata.net`:
+   - **Type:** `Python ASGI` (или `User program`)
+   - Если выбрал **Python ASGI**:
+     - **Python version:** `3.11` (или новее)
+     - **Application path:** `tg_newyear_tree/webapp/app.py` (callable `application`)
+     - **Working directory:** `tg_newyear_tree`
+     - **Virtualenv directory:** `tg_newyear_tree/venv`
+   - Если выбрал **User program**:
+     - **Command:** `/home/ИМЯ_АККАУНТА/tg_newyear_tree/venv/bin/python /home/ИМЯ_АККАУНТА/tg_newyear_tree/run.py`
+     - **Working directory:** `tg_newyear_tree`
+   - На вкладке **SSL** включи **Force HTTPS**.
+5. Чтобы бесплатный сайт не засыпал от простоя, открой **Advanced → Scheduled tasks → Add a scheduled task**:
+   - **Type:** `HTTP request`
+   - **URL:** `https://ИМЯ_АККАУНТА.alwaysdata.net/ping`
+   - **Frequency:** каждые 15 минут (`*/15 * * * *`)
+
+## Деплой на VPS
 
 1. VPS (Ubuntu) + Python 3.11+
 2. `git clone`, `pip install -r requirements.txt`, создать `.env`

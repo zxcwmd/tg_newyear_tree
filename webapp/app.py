@@ -1,8 +1,10 @@
-"""FastAPI сервер для Mini App: отдаёт статику и API."""
+"""FastAPI сервер для Mini App: отдаёт статику, API и запускает бота в фоне (ASGI lifespan)."""
+import asyncio
 from contextlib import asynccontextmanager
 import hashlib
 import hmac
 import json
+import logging
 import os
 from urllib.parse import parse_qsl
 
@@ -11,18 +13,49 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import bot as bot_module
 from config import BOT_TOKEN, ORNAMENTS
 import database as db
 from tree_image import generate_tree_image
+
+log = logging.getLogger(__name__)
+
+
+async def _run_bot_background():
+    try:
+        await bot_module.main(handle_signals=False)
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        log.warning(
+            "Telegram Bot polling не удалось запустить в текущем окружении (%s). "
+            "Mini App веб-сервер продолжает работу.",
+            e,
+        )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.init_db()
-    yield
+    bot_task = None
+    if BOT_TOKEN:
+        bot_task = asyncio.create_task(_run_bot_background())
+    else:
+        log.info("BOT_TOKEN не задан — запущен только Mini App веб-сервер.")
+    try:
+        yield
+    finally:
+        if bot_task and not bot_task.done():
+            bot_task.cancel()
+            try:
+                await bot_task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(title="New Year Tree Mini App", lifespan=lifespan)
+# Алиас для Alwaysdata Python ASGI (по умолчанию ищет `application`)
+application = app
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
@@ -82,6 +115,11 @@ class DeleteRequest(BaseModel):
 @app.get("/")
 async def index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+
+@app.get("/ping")
+async def ping():
+    return {"status": "ok"}
 
 
 @app.get("/api/ornaments")
