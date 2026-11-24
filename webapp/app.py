@@ -14,7 +14,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import bot as bot_module
-from config import BOT_TOKEN, DONATE_PACKS, GRAM_WALLET_ADDRESS, ORNAMENTS, WEBAPP_URL
+from config import (
+    BOT_TOKEN,
+    DONATE_PACKS,
+    GRAM_WALLET_ADDRESS,
+    LOOTBOX_PRICE,
+    ORNAMENTS,
+    TREE_THEMES,
+    WEBAPP_URL,
+)
 import database as db
 from tree_image import generate_tree_image
 
@@ -126,6 +134,26 @@ class DecorateRequest(BaseModel):
     color: str
     x: float
     y: float
+    wish_text: str = ""
+    init_data: str = ""
+    user: UserInfoModel | None = None
+
+
+class DailyClaimRequest(BaseModel):
+    init_data: str = ""
+    user: UserInfoModel | None = None
+
+
+class LootboxRequest(BaseModel):
+    init_data: str = ""
+    user: UserInfoModel | None = None
+
+
+class TreeStyleRequest(BaseModel):
+    chat_id: int
+    bg_theme: str = "midnight"
+    garland_style: str = "multicolor"
+    topper_type: str = "star"
     init_data: str = ""
     user: UserInfoModel | None = None
 
@@ -285,14 +313,30 @@ async def get_tree(
     username: str = Query(default=""),
     first_name: str = Query(default="Игрок"),
     invite_code: str = Query(default=""),
+    referrer_id: int = Query(default=0),
 ):
     await db.upsert_user(user_id, username=username, first_name=first_name)
 
+    referral_bonus_applied = False
+    if referrer_id and referrer_id > 0:
+        referral_bonus_applied = await db.apply_referral(user_id, referrer_id)
+
     # Если передан invite_code командной ёлки — присоединяем игрока и открываем эту командную ёлку
     if invite_code:
-        invited_tree = await db.get_tree_by_invite_code(invite_code)
-        if invited_tree:
-            chat_id = invited_tree["chat_id"]
+        if invite_code.startswith("ref_"):
+            try:
+                ref_uid = int(invite_code[4:])
+                if await db.apply_referral(user_id, ref_uid):
+                    referral_bonus_applied = True
+            except Exception:
+                pass
+        else:
+            invited_tree = await db.get_tree_by_invite_code(invite_code)
+            if invited_tree:
+                chat_id = invited_tree["chat_id"]
+                if invited_tree.get("owner_id"):
+                    if await db.apply_referral(user_id, int(invited_tree["owner_id"])):
+                        referral_bonus_applied = True
 
     cid = normalize_chat_id(chat_id)
     tree = await db.get_tree(cid)
@@ -318,6 +362,10 @@ async def get_tree(
         "profile": profile,
         "bot_username": bot_uname,
         "webapp_url": WEBAPP_URL,
+        "tree_themes": TREE_THEMES,
+        "lootbox_price": LOOTBOX_PRICE,
+        "advent_rewards": db.ADVENT_REWARDS,
+        "referral_bonus_applied": referral_bonus_applied,
     }
 
 
@@ -356,11 +404,58 @@ async def join_team_tree_endpoint(req: JoinTeamTreeRequest):
     if not team_tree:
         raise HTTPException(404, "Командная ёлка по этому коду/ссылке не найдена")
     await db.add_team_member(team_tree["chat_id"], uid)
+    referral_bonus = False
+    if team_tree.get("owner_id"):
+        referral_bonus = await db.apply_referral(uid, int(team_tree["owner_id"]))
     profile = await db.get_user_profile(uid)
     return {
         "ok": True,
         "tree": team_tree,
         "profile": profile,
+        "referral_bonus_applied": referral_bonus,
+    }
+
+
+@app.post("/api/daily-claim")
+async def claim_daily_advent_endpoint(req: DailyClaimRequest):
+    uid = await _ensure_user_from_req(req.init_data, req.user)
+    ok, msg, reward, profile = await db.claim_daily_advent(uid)
+    if not ok:
+        raise HTTPException(400, msg)
+    return {
+        "ok": True,
+        "message": msg,
+        "reward": reward,
+        "profile": profile,
+    }
+
+
+@app.post("/api/lootbox")
+async def open_lootbox_endpoint(req: LootboxRequest):
+    uid = await _ensure_user_from_req(req.init_data, req.user)
+    ok, msg, prize, profile = await db.open_lootbox(uid)
+    if not ok:
+        raise HTTPException(400, msg)
+    return {
+        "ok": True,
+        "message": msg,
+        "prize": prize,
+        "profile": profile,
+    }
+
+
+@app.post("/api/tree-style")
+async def update_tree_style_endpoint(req: TreeStyleRequest):
+    await _ensure_user_from_req(req.init_data, req.user)
+    cid = normalize_chat_id(req.chat_id)
+    bg = req.bg_theme if req.bg_theme in TREE_THEMES["backgrounds"] else "aurora"
+    garland = req.garland_style if req.garland_style in TREE_THEMES["garlands"] else "classic"
+    topper = req.topper_type if req.topper_type in TREE_THEMES["toppers"] else "star"
+    tree = await db.update_tree_style(cid, bg_theme=bg, garland_style=garland, topper_type=topper)
+    return {
+        "ok": True,
+        "tree": tree,
+        "message": "Стиль ёлки обновлён! 🎨",
     }
 
 
@@ -510,9 +605,11 @@ async def decorate(req: DecorateRequest):
             400,
             f"В инвентаре нет «{info['emoji']} {info['name']}»! Купи в Магазине за {info['price']} 🪙",
         )
-    dec_id = await db.add_decoration(cid, uid, req.ornament_type, req.color, req.x, req.y)
+    dec_id = await db.add_decoration(
+        cid, uid, req.ornament_type, req.color, req.x, req.y, wish_text=req.wish_text
+    )
     profile = await db.get_user_profile(uid)
-    return {"id": dec_id, "ok": True, "profile": profile}
+    return {"id": dec_id, "ok": True, "profile": profile, "wish_text": (req.wish_text or "").strip()[:140]}
 
 
 @app.post("/api/move")

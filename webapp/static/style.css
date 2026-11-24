@@ -1256,3 +1256,143 @@ header h1 {
 .dec-item:hover {
   filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.65)) brightness(1.15);
 }
+
+/* ===== v7: Адвент, стили ёлки, пожелания, рефералка, лутбокс ===== */
+.daily-row {
+  display: flex;
+  gap: 10px;
+  margin: 12px 0 10px;
+  padding: 10px;
+}
+.daily-gift-btn {
+  flex: 1.4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: linear-gradient(135deg, #f59e0b, #ef4444);
+  color: #fff;
+  border: none;
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-weight: 800;
+  font-size: 14px;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(239, 68, 68, 0.35);
+}
+.daily-gift-btn.ready { animation: dailyPulse 1.6s ease-in-out infinite; }
+@keyframes dailyPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.03); }
+}
+.daily-gift-emoji { font-size: 22px; }
+.daily-gift-text { flex: 1; text-align: left; }
+.daily-streak-badge {
+  background: rgba(255,255,255,0.25);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.style-btn {
+  flex: 1;
+  background: linear-gradient(135deg, #8b5cf6, #ec4899);
+  color: #fff;
+  border: none;
+  border-radius: 14px;
+  padding: 12px 10px;
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+}
+.referral-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+}
+.referral-info { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.referral-info b { font-size: 13px; }
+.referral-info span { opacity: 0.8; }
+.referral-btn {
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wish-box { margin: 10px 0; padding: 12px; }
+.wish-box label { font-weight: 800; font-size: 13px; display: block; margin-bottom: 8px; }
+.wish-hint { font-size: 11px; opacity: 0.75; margin: 8px 0 0; }
+.advent-body, .style-body, .ornament-body, .lootbox-body { padding: 4px 2px 2px; }
+.advent-streak {
+  text-align: center;
+  font-weight: 800;
+  font-size: 15px;
+  margin: 10px 0;
+  color: #fde047;
+}
+.advent-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.advent-day {
+  border-radius: 12px;
+  padding: 10px 6px;
+  text-align: center;
+  font-size: 11px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+}
+.advent-day .ad-emoji { font-size: 22px; display: block; margin-bottom: 4px; }
+.advent-day.done { opacity: 0.55; border-color: #22c55e; }
+.advent-day.today { border-color: #f59e0b; background: rgba(245,158,11,0.18); animation: dailyPulse 1.6s infinite; }
+.advent-day.locked { opacity: 0.8; }
+.style-options { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 12px; }
+.style-opt {
+  border: 2px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.07);
+  color: inherit;
+  border-radius: 12px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.style-opt.selected { border-color: #f59e0b; background: rgba(245,158,11,0.2); }
+.ornament-author { font-size: 14px; font-weight: 700; margin-bottom: 10px; }
+.ornament-wish-box {
+  background: rgba(253,224,71,0.12);
+  border: 1px solid rgba(253,224,71,0.4);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.ornament-wish-title { font-weight: 800; font-size: 12px; margin-bottom: 4px; }
+.ornament-wish-text { font-size: 14px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+.remove-ornament-btn {
+  width: 100%;
+  background: rgba(220,38,38,0.2);
+  border: 1px solid rgba(220,38,38,0.5);
+  color: #fca5a5;
+  border-radius: 12px;
+  padding: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.lootbox-body { text-align: center; padding: 10px 4px; }
+.lootbox-prize-emoji { font-size: 64px; animation: dailyPulse 1.2s infinite; margin-bottom: 8px; }
+.lootbox-prize-text { font-size: 16px; font-weight: 800; }
+.lootbox-card {
+  grid-column: 1 / -1;
+  background: linear-gradient(135deg, rgba(139,92,246,0.25), rgba(236,72,153,0.25));
+  border: 1px solid rgba(196,181,253,0.5);
+  border-radius: 16px;
+  padding: 14px;
+  text-align: center;
+}
+.lootbox-card .s-emoji { font-size: 40px; }
+.lootbox-card .s-title { font-weight: 800; font-size: 15px; margin: 6px 0 4px; }
+.lootbox-card p { font-size: 12px; opacity: 0.85; margin: 4px 0 10px; }
+.wish-badge { pointer-events: none; }
