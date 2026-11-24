@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 
 dp = Dispatcher()
 _active_bot: Bot | None = None
+_bot_username: str = ""
 
 
 def get_bot_instance() -> Bot | None:
@@ -35,6 +36,21 @@ def get_bot_instance() -> Bot | None:
     if _active_bot is None and BOT_TOKEN:
         _active_bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     return _active_bot
+
+
+async def get_bot_username() -> str:
+    global _bot_username
+    if _bot_username:
+        return _bot_username
+    bot = get_bot_instance()
+    if not bot:
+        return ""
+    try:
+        me = await bot.get_me()
+        _bot_username = me.username or ""
+    except Exception:
+        pass
+    return _bot_username
 
 
 async def create_stars_invoice_link(user_id: int, pack_id: str, order_id: int) -> str | None:
@@ -99,21 +115,36 @@ async def on_successful_payment(message: Message):
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     chat = message.chat
+    uid = message.from_user.id if message.from_user else 1
     if message.from_user:
         await db.upsert_user(
-            message.from_user.id,
+            uid,
             username=message.from_user.username or "",
             first_name=message.from_user.first_name or "Участник",
             last_name=message.from_user.last_name or "",
         )
+    # Проверяем реферальный / командный параметр (/start team_xxxx)
+    parts = (message.text or "").split(maxsplit=1)
+    start_arg = parts[1].strip() if len(parts) > 1 else ""
+    if start_arg.startswith("team_"):
+        team_tree = await db.get_tree_by_invite_code(start_arg)
+        if team_tree:
+            await db.add_team_member(team_tree["chat_id"], uid)
+            await message.answer(
+                f"🎄 <b>Ты присоединился к командной ёлке «{team_tree.get('chat_title') or 'Друзья'}»!</b>\n\n"
+                "Нажимай кнопку ниже, чтобы наряжать эту ёлку вместе со своей командой 👇",
+                reply_markup=webapp_button(team_tree["chat_id"], f"🎄 Наряжать «{team_tree.get('chat_title') or 'Командная ёлка'}»"),
+            )
+            return
+
     if chat.type == "private":
         await db.get_or_create_tree(1, "Общая новогодняя ёлка")
         await message.answer(
             "🎄 Привет! Я — бот новогодней ёлки!\n\n"
             "• Фарми монеты в кликере 🪙\n"
             "• Покупай игрушки в магазине 🛍 или за ⭐️ Stars / 💎 GRAM\n"
-            "• Украшай общую ёлку вместе с другими игроками и друзьями до 1 января!\n\n"
-            "Добавь меня в групповой чат или открой общую ёлку кнопкой ниже 👇\n\n"
+            "• Создавай командную ёлку с друзьями по ссылке или украшай общую ёлку до 1 января!\n\n"
+            "Добавь меня в групповой чат или открой ёлку кнопкой ниже 👇\n\n"
             "Команды:\n"
             "/start — открыть ёлку\n"
             "/tree — показать текущую ёлку картинкой\n"

@@ -6,14 +6,15 @@ if (tg) {
 
 const params = new URLSearchParams(window.location.search);
 const rawUrlChat = params.get("chat_id") || params.get("startapp") || tg?.initDataUnsafe?.start_param || "";
-// Групповые чаты имеют отрицательный ID (< 0). Одиночные положительные ID (> 1) объединяем в общую ёлку "1"
+const urlInviteCode = params.get("invite") || (String(rawUrlChat).startsWith("team_") ? String(rawUrlChat) : "");
+
 function normalizeChatId(val) {
   const n = Number(val);
   if (!Number.isNaN(n) && n < 0) return String(n);
   return "1";
 }
 
-const chatId = normalizeChatId(rawUrlChat);
+let chatId = normalizeChatId(rawUrlChat);
 const initData = tg?.initData || "";
 
 function getPersistentUser() {
@@ -41,20 +42,26 @@ function getPersistentUser() {
 }
 
 const currentUser = getPersistentUser();
-const BACKUP_KEY = `ny_backup_v5_${chatId}_${currentUser.id}`;
+const BACKUP_KEY = `ny_backup_v6_${currentUser.id}`;
 
 let state = {
+  tree: null,
   ornaments: {},
   donatePacks: {},
   gramWallet: "",
+  botUsername: "",
+  webappUrl: window.location.origin,
   selectedType: "ball",
   selectedColor: "red",
   decorations: [],
   stats: [],
-  leaderboard: { by_toys: [], by_coins: [] },
+  leaderboard: { by_toys: [], by_turnover: [], team_trees: [] },
+  teamTrees: [],
   activeLbTab: "by_toys",
+  activeSegment: "all",
   myUserId: currentUser.id,
   coins: 50,
+  coinTurnover: 50,
   clickPower: 1,
   inventory: { ball: 2, snowflake: 1 },
   energy: 500,
@@ -62,12 +69,13 @@ let state = {
   pendingClicks: 0,
   combo: 1,
   lastClickAt: 0,
-  activeGramPack: null,
+  activeGramOrder: null,
 };
 
 let dragState = null;
 let suppressNextTreeClick = false;
 let clickFlushTimer = null;
+let gramAutoTimer = null;
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
@@ -80,7 +88,7 @@ function toast(msg, isError = false) {
   t.textContent = msg;
   t.className = "toast show" + (isError ? " error" : "");
   clearTimeout(toast._timer);
-  toast._timer = setTimeout(() => t.classList.remove("show"), 2300);
+  toast._timer = setTimeout(() => t.classList.remove("show"), 2400);
 }
 
 function haptic(type = "light") {
@@ -88,7 +96,53 @@ function haptic(type = "light") {
 }
 
 // ============================================================================
-// 1. ЖИВОЙ ФОН (#bgCanvas) И СИСТЕМА ЧАСТИЦ (#fxCanvas)
+// 1. ВЫБОР СЕГМЕНТА (ЯРУСА) ЁЛКИ — ПЛАВНЫЙ ЗУМ КАМЕРЫ
+// ============================================================================
+const SEGMENTS_VB = {
+  all: { x: 0, y: 0, w: 400, h: 500 },
+  top: { x: 92, y: 22, w: 216, h: 205 },
+  mid: { x: 64, y: 132, w: 272, h: 205 },
+  bot: { x: 42, y: 226, w: 316, h: 245 },
+};
+
+let currentVB = { ...SEGMENTS_VB.all };
+let vbAnimFrame = null;
+
+function setTreeSegment(segKey) {
+  const target = SEGMENTS_VB[segKey] || SEGMENTS_VB.all;
+  state.activeSegment = segKey;
+  $$(".seg-btn").forEach((b) => b.classList.toggle("active", b.dataset.seg === segKey));
+  haptic("light");
+
+  if (vbAnimFrame) cancelAnimationFrame(vbAnimFrame);
+  const startVB = { ...currentVB };
+  const startTime = performance.now();
+  const duration = 260;
+
+  function step(now) {
+    const t = Math.min(1, (now - startTime) / duration);
+    const ease = 1 - Math.pow(1 - t, 3);
+    currentVB.x = startVB.x + (target.x - startVB.x) * ease;
+    currentVB.y = startVB.y + (target.y - startVB.y) * ease;
+    currentVB.w = startVB.w + (target.w - startVB.w) * ease;
+    currentVB.h = startVB.h + (target.h - startVB.h) * ease;
+    treeSvg.setAttribute(
+      "viewBox",
+      `${currentVB.x.toFixed(1)} ${currentVB.y.toFixed(1)} ${currentVB.w.toFixed(1)} ${currentVB.h.toFixed(1)}`
+    );
+    if (t < 1) {
+      vbAnimFrame = requestAnimationFrame(step);
+    }
+  }
+  vbAnimFrame = requestAnimationFrame(step);
+}
+
+$$(".seg-btn").forEach((btn) => {
+  btn.addEventListener("click", () => setTreeSegment(btn.dataset.seg));
+});
+
+// ============================================================================
+// 2. ЖИВОЙ ФОН (#bgCanvas) И СИСТЕМА ЧАСТИЦ (#fxCanvas)
 // ============================================================================
 const bgCanvas = $("#bgCanvas");
 const bgCtx = bgCanvas.getContext("2d");
@@ -147,7 +201,6 @@ function animateCanvases() {
   animTick += 0.015;
   bgCtx.clearRect(0, 0, bgW, bgH);
 
-  // Мягкое северное сияние в фоне
   const grad1 = bgCtx.createRadialGradient(
     bgW * (0.3 + 0.15 * Math.sin(animTick)),
     bgH * 0.18,
@@ -162,7 +215,6 @@ function animateCanvases() {
   bgCtx.fillStyle = grad1;
   bgCtx.fillRect(0, 0, bgW, bgH);
 
-  // Падающий снег с глубиной
   for (const s of bgSnow) {
     s.y += s.vy;
     s.x += s.vx + Math.sin(animTick + s.phase) * 0.25;
@@ -179,13 +231,12 @@ function animateCanvases() {
     bgCtx.fill();
   }
 
-  // Частицы спецэффектов
   fxCtx.clearRect(0, 0, bgW, bgH);
   for (let i = fxParticles.length - 1; i >= 0; i--) {
     const p = fxParticles[i];
     p.x += p.vx;
     p.y += p.vy;
-    p.vy += 0.14; // гравитация
+    p.vy += 0.14;
     p.alpha -= p.decay;
     if (p.alpha <= 0) {
       fxParticles.splice(i, 1);
@@ -213,12 +264,12 @@ function animateCanvases() {
 requestAnimationFrame(animateCanvases);
 
 // ============================================================================
-// 2. ПРОВЕРКА ГРАНИЦ ЁЛКИ (ЗАПРЕТ ВЕШАТЬ МИМО ВЕТОК)
+// 3. ПРОВЕРКА ГРАНИЦ ЁЛКИ И КОНВЕРТАЦИЯ КООРДИНАТ С УЧЁТОМ ЗУМА СЕГМЕНТА
 // ============================================================================
 const TREE_TIERS = [
-  [64.0, 215.0, 8.0, 74.0],
-  [150.0, 325.0, 14.0, 94.0],
-  [240.0, 428.0, 18.0, 118.0],
+  [60.0, 216.0, 8.0, 76.0],
+  [146.0, 326.0, 14.0, 96.0],
+  [236.0, 430.0, 18.0, 120.0],
 ];
 
 function isPointInsideTree(xPct, yPct) {
@@ -236,12 +287,12 @@ function isPointInsideTree(xPct, yPct) {
 
 function clampToTree(xPct, yPct) {
   const sx = xPct * 4.0;
-  const sy = Math.max(68.0, Math.min(424.0, yPct * 5.0));
+  const sy = Math.max(64.0, Math.min(426.0, yPct * 5.0));
   let allowedHw = 20.0;
   for (const [yTop, yBot, hwTop, hwBot] of TREE_TIERS) {
     if (sy >= yTop && sy <= yBot) {
       const t = (sy - yTop) / (yBot - yTop);
-      const hw = hwTop + t * (hwBot - hwTop) - 3.0;
+      const hw = hwTop + t * (hwBot - hwTop) - 2.0;
       if (hw > allowedHw) allowedHw = hw;
     }
   }
@@ -252,13 +303,27 @@ function clampToTree(xPct, yPct) {
   };
 }
 
+function clientToPercent(clientX, clientY) {
+  const rect = treeSvg.getBoundingClientRect();
+  const relX = (clientX - rect.left) / rect.width;
+  const relY = (clientY - rect.top) / rect.height;
+  // Переводим с учётом текущего приближенного сегмента (currentVB) в глобальные координаты SVG (0..400, 0..500)
+  const svgX = currentVB.x + relX * currentVB.w;
+  const svgY = currentVB.y + relY * currentVB.h;
+  return {
+    x: Math.round((svgX / 400.0) * 1000) / 10,
+    y: Math.round((svgY / 500.0) * 1000) / 10,
+  };
+}
+
 // ============================================================================
-// 3. ЛОКАЛЬНЫЙ И ОБЛАЧНЫЙ БЭКАП ПРОГРЕССА
+// 4. ЛОКАЛЬНЫЙ И ОБЛАЧНЫЙ БЭКАП ПРОГРЕССА
 // ============================================================================
 function saveBackup() {
   const myDecs = state.decorations.filter((d) => d.user_id === state.myUserId);
   const payload = {
     coins: state.coins,
+    coin_turnover: state.coinTurnover,
     click_power: state.clickPower,
     inventory: state.inventory,
     decorations: myDecs,
@@ -284,7 +349,7 @@ function loadLocalBackup() {
 }
 
 // ============================================================================
-// 4. НАВИГАЦИЯ ПО ВКЛАДКАМ
+// 5. НАВИГАЦИЯ ПО ВКЛАДКАМ
 // ============================================================================
 function switchTab(tabName) {
   $$(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === tabName));
@@ -323,7 +388,8 @@ async function fetchLeaderboardOnly(showToast = false) {
     state.stats = data.chat_stats || state.stats;
     state.leaderboard = {
       by_toys: data.by_toys || [],
-      by_coins: data.by_coins || [],
+      by_turnover: data.by_turnover || [],
+      team_trees: data.team_trees || [],
     };
     renderLeaderboard();
     if (showToast) toast("Рейтинг обновлён 🏆");
@@ -352,9 +418,14 @@ function updateCountdown() {
 function applyProfile(profile) {
   if (!profile) return;
   state.coins = Number(profile.coins ?? state.coins);
+  state.coinTurnover = Number(profile.coin_turnover ?? Math.max(state.coinTurnover, state.coins));
   state.clickPower = Number(profile.click_power ?? state.clickPower);
   if (profile.inventory) {
     state.inventory = { ...state.inventory, ...profile.inventory };
+  }
+  if (Array.isArray(profile.team_trees)) {
+    state.teamTrees = profile.team_trees;
+    renderTreeSwitcher();
   }
   updateHeaderAndClickerUI();
   renderPalette();
@@ -364,18 +435,166 @@ function applyProfile(profile) {
 
 function updateHeaderAndClickerUI() {
   $("#coinBalance").textContent = state.coins;
-  $("#clickerCoins").textContent = `${state.coins} 🪙`;
+  $("#turnoverChip").textContent = `🔄 Оборот: ${state.coinTurnover} 🪙`;
+  $("#clickerCoins").textContent = `${state.coins} / ${state.coinTurnover} 🪙`;
   $("#clickPowerLabel").textContent = `+${state.clickPower} 🪙`;
   $("#upgradeCost").textContent = state.clickPower * 100;
   $("#energyText").textContent = `${state.energy} / ${state.maxEnergy}`;
   const pct = Math.max(0, Math.min(100, (state.energy / state.maxEnergy) * 100));
   $("#energyBarFill").style.width = `${pct}%`;
-  const totalPlayers = Math.max(1, state.leaderboard?.by_toys?.length || state.stats?.length || 1);
-  $("#playersCountChip").textContent = `👥 Игроков: ${totalPlayers}`;
 }
 
 // ============================================================================
-// 5. ТЕКСТУРИРОВАННАЯ 3D ОТРИСОВКА ЁЛКИ, ГИРЛЯНДЫ И ИГРУШЕК
+// 6. КОМАНДНЫЕ ЁЛКИ С ДРУЗЬЯМИ ПО ССЫЛКЕ
+// ============================================================================
+function getInviteLinkForTree(treeObj) {
+  if (!treeObj) return window.location.origin;
+  const code = treeObj.invite_code || `team_${treeObj.chat_id}`;
+  if (state.botUsername) {
+    return `https://t.me/${state.botUsername}?start=${code}`;
+  }
+  return `${window.location.origin}/?chat_id=${treeObj.chat_id}&invite=${code}`;
+}
+
+function renderTreeSwitcher() {
+  const sel = $("#treeSwitcher");
+  if (!sel) return;
+  const currentVal = String(chatId);
+  sel.innerHTML = `<option value="1">🌍 Общая новогодняя ёлка</option>`;
+
+  const seen = new Set(["1"]);
+  const list = [...(state.teamTrees || [])];
+  if (state.tree && Number(state.tree.chat_id) < 0 && !list.some((t) => String(t.chat_id) === String(state.tree.chat_id))) {
+    list.unshift(state.tree);
+  }
+
+  for (const t of list) {
+    const cidStr = String(t.chat_id);
+    if (seen.has(cidStr)) continue;
+    seen.add(cidStr);
+    const opt = document.createElement("option");
+    opt.value = cidStr;
+    opt.textContent = `👥 ${t.chat_title || "Командная ёлка"}`;
+    sel.appendChild(opt);
+  }
+  sel.value = seen.has(currentVal) ? currentVal : "1";
+
+  // Показываем панель быстрого приглашения друзей, если выбрана командная ёлка
+  const shareRow = $("#teamShareRow");
+  if (Number(chatId) < 0 && state.tree) {
+    shareRow.classList.remove("hidden");
+    const code = state.tree.invite_code || `team_${state.tree.chat_id}`;
+    $("#teamCodeLabel").textContent = `Код команды: ${code}`;
+  } else {
+    shareRow.classList.add("hidden");
+  }
+}
+
+$("#treeSwitcher").addEventListener("change", async (e) => {
+  chatId = e.target.value;
+  haptic("light");
+  await refreshTreeData();
+});
+
+$("#openTeamModalBtn").addEventListener("click", () => {
+  $("#createdInviteBox").classList.add("hidden");
+  $("#teamModal").classList.remove("hidden");
+});
+
+$("#closeTeamModalBtn").addEventListener("click", () => {
+  $("#teamModal").classList.add("hidden");
+});
+
+$("#createTeamBtn").addEventListener("click", async () => {
+  const title = ($("#teamNameInput").value || "").trim();
+  if (title.length < 2) {
+    toast("Введи название ёлки (минимум 2 символа)", true);
+    return;
+  }
+  try {
+    const res = await fetch("/api/team/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        init_data: initData,
+        user: currentUser,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Ошибка создания");
+    haptic("heavy");
+    chatId = String(data.tree.chat_id);
+    if (data.profile) applyProfile(data.profile);
+    await refreshTreeData();
+
+    const inviteUrl = data.bot_invite_url || getInviteLinkForTree(data.tree);
+    $("#teamInviteLinkCode").textContent = inviteUrl;
+    $("#createdInviteBox").classList.remove("hidden");
+    toast(`Командная ёлка «${data.tree.chat_title}» создана! 🎉`);
+  } catch (err) {
+    toast(err.message || "Не удалось создать", true);
+  }
+});
+
+$("#joinTeamBtn").addEventListener("click", async () => {
+  const code = ($("#joinCodeInput").value || "").trim();
+  if (!code) {
+    toast("Введи код или ссылку приглашения", true);
+    return;
+  }
+  try {
+    const res = await fetch("/api/team/join", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        invite_code: code,
+        init_data: initData,
+        user: currentUser,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Ёлка не найдена");
+    haptic("medium");
+    chatId = String(data.tree.chat_id);
+    if (data.profile) applyProfile(data.profile);
+    $("#teamModal").classList.add("hidden");
+    await refreshTreeData();
+    toast(`Ты присоединился к «${data.tree.chat_title}»! 🎄`);
+  } catch (err) {
+    toast(err.message || "Код не найден", true);
+  }
+});
+
+function shareCurrentTeamTree(inviteUrl, treeTitle) {
+  const text = `🎄 Заходи наряжать нашу командную новогоднюю ёлку «${treeTitle || "Друзья"}»!`;
+  const shareLink = `https://t.me/share/url?url=${encodeURIComponent(inviteUrl)}&text=${encodeURIComponent(text)}`;
+  if (tg?.openTelegramLink) {
+    tg.openTelegramLink(shareLink);
+  } else {
+    window.open(shareLink, "_blank");
+  }
+}
+
+$("#copyTeamLinkBtn").addEventListener("click", () => {
+  navigator.clipboard?.writeText($("#teamInviteLinkCode").textContent || "");
+  toast("Ссылка приглашения скопирована! 📋");
+});
+
+$("#tgShareTeamBtn").addEventListener("click", () => {
+  const link = $("#teamInviteLinkCode").textContent || getInviteLinkForTree(state.tree);
+  shareCurrentTeamTree(link, state.tree?.chat_title);
+});
+
+$("#shareTeamBtn").addEventListener("click", () => {
+  const link = getInviteLinkForTree(state.tree);
+  $("#teamInviteLinkCode").textContent = link;
+  $("#createdInviteBox").classList.remove("hidden");
+  $("#teamModal").classList.remove("hidden");
+});
+
+// ============================================================================
+// 7. ОТРИСОВКА ЁЛКИ, ГИРЛЯНДЫ И ИГРУШЕК
 // ============================================================================
 function svgEl(tag, attrs = {}) {
   const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
@@ -433,7 +652,6 @@ function drawGarlandLights() {
 function drawTopStar() {
   const g = $("#topStar");
   g.innerHTML = "";
-  // Сияющий ореол вокруг макушки
   g.appendChild(svgEl("circle", { cx: 200, cy: 48, r: 28, fill: "#fde047", opacity: 0.22, filter: "url(#glowFilter)" }));
   g.appendChild(starShape(200, 48, 24, "#fde047", "#ca8a04"));
   g.appendChild(starShape(200, 48, 12, "#fef9c3", "none"));
@@ -461,12 +679,9 @@ function ornamentShape(type, colorName, colorHex, x, y) {
   if (type === "ball") {
     const gradId = `ball_${colorName}`;
     const fillVal = document.getElementById(gradId) ? `url(#${gradId})` : colorHex;
-    // Золотая петелька и коронка
     g.appendChild(svgEl("circle", { cx: 0, cy: -16, r: 3, fill: "none", stroke: "#facc15", "stroke-width": 1.3 }));
     g.appendChild(svgEl("rect", { x: -3.5, y: -14.5, width: 7, height: 4.5, rx: 1.2, fill: "#eab308", stroke: "#713f12", "stroke-width": 0.6 }));
-    // 3D сфера шара
     g.appendChild(svgEl("circle", { cx: 0, cy: 0, r: 12.5, fill: fillVal, stroke: "rgba(255,255,255,0.22)", "stroke-width": 0.7 }));
-    // Блик стекла
     g.appendChild(svgEl("ellipse", { cx: -4.2, cy: -4.8, rx: 3.8, ry: 2.2, fill: "#ffffff", opacity: 0.75, transform: "rotate(-25 -4.2 -4.8)" }));
     g.appendChild(svgEl("circle", { cx: -1.5, cy: -1.5, r: 1.1, fill: "#ffffff", opacity: 0.55 }));
   } else if (type === "star") {
@@ -498,20 +713,15 @@ function ornamentShape(type, colorName, colorHex, x, y) {
   } else if (type === "gift") {
     const gradId = `ball_${colorName}`;
     const fillVal = document.getElementById(gradId) ? `url(#${gradId})` : colorHex;
-    // Коробка
     g.appendChild(svgEl("rect", { x: -11, y: -6, width: 22, height: 17, rx: 2.5, fill: fillVal, stroke: "rgba(0,0,0,0.45)" }));
-    // Крышка
     g.appendChild(svgEl("rect", { x: -12.5, y: -10.5, width: 25, height: 6, rx: 2, fill: fillVal, stroke: "rgba(0,0,0,0.45)" }));
-    // Золотые ленты и пышный бант
     g.appendChild(svgEl("rect", { x: -2.2, y: -10.5, width: 4.4, height: 21.5, fill: "#fde047" }));
     g.appendChild(svgEl("rect", { x: -11, y: 0, width: 22, height: 3.6, fill: "#fde047" }));
     g.appendChild(svgEl("ellipse", { cx: -4.5, cy: -12.5, rx: 4.5, ry: 2.6, fill: "none", stroke: "#fde047", "stroke-width": 2.2, transform: "rotate(-20 -4.5 -12.5)" }));
     g.appendChild(svgEl("ellipse", { cx: 4.5, cy: -12.5, rx: 4.5, ry: 2.6, fill: "none", stroke: "#fde047", "stroke-width": 2.2, transform: "rotate(20 4.5 -12.5)" }));
   } else if (type === "bell") {
-    // Бантик сверху
     g.appendChild(svgEl("circle", { cx: -4, cy: -11, r: 3, fill: "#ef4444" }));
     g.appendChild(svgEl("circle", { cx: 4, cy: -11, r: 3, fill: "#ef4444" }));
-    // Купол колокольчика
     g.appendChild(svgEl("path", {
       d: "M -11,7 Q -10,-10 0,-10 Q 10,-10 11,7 Z",
       fill: "url(#ball_gold)",
@@ -524,25 +734,13 @@ function ornamentShape(type, colorName, colorHex, x, y) {
   } else if (type === "candy") {
     const gradId = `ball_${colorName}`;
     const fillVal = document.getElementById(gradId) ? `url(#${gradId})` : colorHex;
-    // Хвостики фантика
     g.appendChild(svgEl("polygon", { points: "-8,0 -17,-7 -15,0 -17,7", fill: fillVal, stroke: "rgba(0,0,0,0.35)" }));
     g.appendChild(svgEl("polygon", { points: "8,0 17,-7 15,0 17,7", fill: fillVal, stroke: "rgba(0,0,0,0.35)" }));
-    // Конфета со спиральными полосками
     g.appendChild(svgEl("circle", { cx: 0, cy: 0, r: 9.5, fill: fillVal, stroke: "rgba(255,255,255,0.35)", "stroke-width": 0.8 }));
     g.appendChild(svgEl("path", { d: "M -6,-5 Q 0,0 6,5 M -6,5 Q 0,0 6,-5", stroke: "#ffffff", "stroke-width": 2.2, "stroke-linecap": "round", opacity: 0.85 }));
     g.appendChild(svgEl("circle", { cx: -3, cy: -3.5, r: 2.2, fill: "#ffffff", opacity: 0.65 }));
   }
   return g;
-}
-
-function clientToPercent(clientX, clientY) {
-  const rect = treeSvg.getBoundingClientRect();
-  const x = ((clientX - rect.left) / rect.width) * 100;
-  const y = ((clientY - rect.top) / rect.height) * 100;
-  return {
-    x: Math.round(x * 10) / 10,
-    y: Math.round(y * 10) / 10,
-  };
 }
 
 function renderDecorations() {
@@ -630,15 +828,16 @@ async function saveMoveDecoration(decorationId, x, y) {
 }
 
 // ============================================================================
-// 6. ОТДЕЛЬНАЯ ВКЛАДКА ЛИДЕРБОРДА (ПОДИУМ ТОП-3 + ПОЛНЫЙ СПИСОК ИГРОКОВ)
+// 8. ЛИДЕРБОРД (ИГРОКИ, ОБОРОТ МОНЕТ, КОМАНДНЫЕ ЁЛКИ, ТЕКУЩАЯ ЁЛКА)
 // ============================================================================
 function getDisplayName(row) {
+  if (row.chat_title) return row.chat_title;
   if (row.username) return `@${row.username}`;
   return row.first_name || `Игрок #${row.user_id}`;
 }
 
 function getInitials(row) {
-  const name = (row.first_name || row.username || "И").trim();
+  const name = (row.chat_title || row.first_name || row.username || "🎄").trim();
   return name.slice(0, 1).toUpperCase();
 }
 
@@ -649,8 +848,10 @@ function renderLeaderboard() {
 
   let rows = [];
   const mode = state.activeLbTab;
-  if (mode === "by_coins") {
-    rows = state.leaderboard?.by_coins || [];
+  if (mode === "by_turnover") {
+    rows = state.leaderboard?.by_turnover || [];
+  } else if (mode === "team_trees") {
+    rows = state.leaderboard?.team_trees || [];
   } else if (mode === "chat_stats") {
     rows = state.stats || [];
   } else {
@@ -661,11 +862,14 @@ function renderLeaderboard() {
   listEl.innerHTML = "";
 
   if (!rows.length) {
-    listEl.innerHTML = `<li class="lb-row"><span>Пока нет участников</span><span>—</span></li>`;
+    listEl.innerHTML = `<li class="lb-row"><span>${
+      mode === "team_trees"
+        ? "Пока нет командных ёлок. Создай свою во вкладке «🎄 Ёлка» → «👥 + С друзьями»!"
+        : "Пока нет участников"
+    }</span></li>`;
     return;
   }
 
-  // Подиум Топ-3 (порядок отображения: 2 место слева, 1 место в центре, 3 место справа)
   const top3Order = [rows[1], rows[0], rows[2]];
   const ranks = [2, 1, 3];
   const medals = { 1: "🥇", 2: "🥈", 3: "🥉" };
@@ -682,8 +886,8 @@ function renderLeaderboard() {
         <div class="podium-score">0</div>
       `;
     } else {
-      const scoreText = mode === "by_coins"
-        ? `${item.coins ?? 0} 🪙`
+      const scoreText = mode === "by_turnover"
+        ? `${item.coin_turnover ?? item.coins ?? 0} 🪙`
         : `${item.count ?? 0} 🎄`;
       card.innerHTML = `
         <div class="podium-medal">${medals[r]}</div>
@@ -695,25 +899,31 @@ function renderLeaderboard() {
     podiumEl.appendChild(card);
   });
 
-  // Полный список всех игроков
   rows.forEach((row, idx) => {
-    const isMe = Number(row.user_id) === Number(state.myUserId);
+    const isTeamMode = mode === "team_trees";
+    const isMe = isTeamMode
+      ? String(row.chat_id) === String(chatId)
+      : Number(row.user_id) === Number(state.myUserId);
     const li = document.createElement("li");
     li.className = "lb-row" + (isMe ? " is-me" : "");
     const medal = ["🥇", "🥈", "🥉"][idx] || `${idx + 1}.`;
-    const mainMetric = mode === "by_coins"
-      ? `${row.coins ?? 0} 🪙`
-      : `${row.count ?? 0} 🎄`;
-    const subMetric = mode === "by_coins"
-      ? `Наряжено игрушек: ${row.count ?? 0} 🎄`
-      : `Баланс: ${row.coins ?? 0} 🪙`;
+
+    let mainMetric = `${row.count ?? 0} 🎄`;
+    let subMetric = `Оборот: ${row.coin_turnover ?? row.coins ?? 0} 🪙`;
+    if (mode === "by_turnover") {
+      mainMetric = `${row.coin_turnover ?? row.coins ?? 0} 🪙`;
+      subMetric = `Наряжено игрушек: ${row.count ?? 0} 🎄`;
+    } else if (isTeamMode) {
+      mainMetric = `${row.count ?? 0} 🎄`;
+      subMetric = `Участников в команде: ${Math.max(1, row.members_count || 1)} 👥`;
+    }
 
     li.innerHTML = `
       <div class="lb-left">
         <span class="lb-rank">${medal}</span>
         <div class="lb-avatar">${escapeHtml(getInitials(row))}</div>
         <div class="lb-user-meta">
-          <div class="lb-uname">${escapeHtml(getDisplayName(row))} ${isMe ? "<b>(Вы)</b>" : ""}</div>
+          <div class="lb-uname">${escapeHtml(getDisplayName(row))} ${isMe ? `<b>${isTeamMode ? "(Открыта)" : "(Вы)"}</b>` : ""}</div>
           <div class="lb-sub">${subMetric}</div>
         </div>
       </div>
@@ -732,7 +942,7 @@ function escapeHtml(s) {
 }
 
 // ============================================================================
-// 7. ИНВЕНТАРЬ, МАГАЗИН И ДОНАТ
+// 9. ИНВЕНТАРЬ, МАГАЗИН И ДОНАТ (С АВТОВЫДАЧЕЙ GRAM СРАЗУ ПОСЛЕ ОПЛАТЫ)
 // ============================================================================
 function renderPalette() {
   palette.innerHTML = "";
@@ -888,20 +1098,72 @@ async function buyWithStars(packId) {
   }
 }
 
-function openGramModal(packId) {
+async function openGramModal(packId) {
   const pack = state.donatePacks[packId];
   if (!pack) return;
-  state.activeGramPack = pack;
-  const memo = `NYTREE_${currentUser.id}_${packId}`;
-  $("#gramModalTitle").textContent = `💎 ${pack.title}`;
-  $("#gramPackDesc").textContent = pack.description;
-  $("#gramAmountText").textContent = `${pack.gram_price} GRAM`;
-  $("#gramWalletCode").textContent = state.gramWallet || "UQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJKZ";
-  $("#gramMemoCode").textContent = memo;
-  const wallet = encodeURIComponent(state.gramWallet || "");
-  $("#gramDeepLink").href = `https://app.tonkeeper.com/transfer/${wallet}?text=${encodeURIComponent(memo)}`;
-  $("#gramModal").classList.remove("hidden");
+  clearTimeout(gramAutoTimer);
+  $("#gramAutoStatus").classList.add("hidden");
+
+  try {
+    const res = await fetch("/api/donate/gram-order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pack_id: packId,
+        currency: "GRAM",
+        init_data: initData,
+        user: currentUser,
+      }),
+    });
+    const orderData = await res.json();
+    if (!res.ok) throw new Error(orderData.detail || "Ошибка создания заказа");
+
+    state.activeGramOrder = {
+      packId,
+      orderId: orderData.order_id,
+      memo: orderData.memo,
+      price: orderData.gram_price,
+      paidInitiated: false,
+    };
+
+    $("#gramModalTitle").textContent = `💎 ${pack.title}`;
+    $("#gramPackDesc").textContent = pack.description;
+    $("#gramAmountText").textContent = `${orderData.gram_price} GRAM`;
+    $("#gramWalletCode").textContent = orderData.wallet || state.gramWallet;
+    $("#gramMemoCode").textContent = orderData.memo;
+    const wallet = encodeURIComponent(orderData.wallet || state.gramWallet || "");
+    $("#gramDeepLink").href = `https://app.tonkeeper.com/transfer/${wallet}?text=${encodeURIComponent(orderData.memo)}`;
+    $("#gramModal").classList.remove("hidden");
+  } catch (err) {
+    toast(err.message || "Ошибка создания заказа GRAM", true);
+  }
 }
+
+// Автовыдача GRAM сразу после перехода к оплате / возврата из кошелька
+$("#gramDeepLink").addEventListener("click", () => {
+  if (!state.activeGramOrder) return;
+  state.activeGramOrder.paidInitiated = true;
+  $("#gramAutoStatus").classList.remove("hidden");
+  $("#gramAutoStatusText").textContent = "Проверка оплаты в сети... Набор выдастся автоматически!";
+
+  clearTimeout(gramAutoTimer);
+  gramAutoTimer = setTimeout(async () => {
+    if (state.activeGramOrder && state.activeGramOrder.paidInitiated) {
+      const ord = state.activeGramOrder;
+      state.activeGramOrder = null;
+      await claimDonateReward(ord.packId, "GRAM", ord.orderId);
+    }
+  }, 4500);
+});
+
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "visible" && state.activeGramOrder && state.activeGramOrder.paidInitiated) {
+    clearTimeout(gramAutoTimer);
+    const ord = state.activeGramOrder;
+    state.activeGramOrder = null;
+    await claimDonateReward(ord.packId, "GRAM", ord.orderId);
+  }
+});
 
 async function claimDonateReward(packId, currency, orderId = 0) {
   try {
@@ -917,14 +1179,14 @@ async function claimDonateReward(packId, currency, orderId = 0) {
       }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "Ошибка начисления");
+    if (!res.ok) throw new Error(data.detail || "Ошибка автовыдачи");
     haptic("heavy");
-    spawnParticles(window.innerWidth / 2, window.innerHeight / 2, "#fde047", 32);
+    spawnParticles(window.innerWidth / 2, window.innerHeight / 2, "#fde047", 36);
     applyProfile(data.profile);
     $("#gramModal").classList.add("hidden");
-    toast(data.message || "Набор получен! 🎉");
+    toast(data.message || "Набор автоматически выдан! 🎉");
   } catch (err) {
-    toast(err.message || "Ошибка начисления", true);
+    toast(err.message || "Ошибка автовыдачи", true);
   }
 }
 
@@ -933,17 +1195,13 @@ $("#copyWalletBtn").addEventListener("click", () => {
   toast("Адрес кошелька скопирован 📋");
 });
 
-$("#confirmGramPaidBtn").addEventListener("click", async () => {
-  if (!state.activeGramPack) return;
-  await claimDonateReward(state.activeGramPack.id, "GRAM", 0);
-});
-
 $("#closeGramModalBtn").addEventListener("click", () => {
+  clearTimeout(gramAutoTimer);
   $("#gramModal").classList.add("hidden");
 });
 
 // ============================================================================
-// 8. КЛИКЕР С КОМБО И ЧАСТИЦАМИ
+// 10. КЛИКЕР С ОБОРОТОМ МОНЕТ И КОМБО
 // ============================================================================
 const bigClickBtn = $("#bigClickBtn");
 const clickerStage = $("#clickerStage");
@@ -965,6 +1223,7 @@ bigClickBtn.addEventListener("pointerdown", (e) => {
 
   state.energy = Math.max(0, state.energy - 1);
   state.coins += state.clickPower;
+  state.coinTurnover += state.clickPower;
   state.pendingClicks += 1;
   haptic("light");
   updateHeaderAndClickerUI();
@@ -1042,35 +1301,41 @@ setInterval(() => {
 }, 1000);
 
 // ============================================================================
-// 9. ЗАГРУЗКА ЁЛКИ, УКРАШЕНИЕ И СИНХРОНИЗАЦИЯ
+// 11. ЗАГРУЗКА ЁЛКИ, УКРАШЕНИЕ И СИНХРОНИЗАЦИЯ
 // ============================================================================
-async function refreshTreeData() {
+async function refreshTreeData(inviteOverride = "") {
   const q = new URLSearchParams({
     user_id: String(currentUser.id),
     username: currentUser.username || "",
     first_name: currentUser.first_name || "Игрок",
+    invite_code: inviteOverride,
     t: String(Date.now()),
   });
   const res = await fetch(`/api/tree/${chatId}?${q.toString()}`, { cache: "no-store" });
   if (!res.ok) throw new Error(await res.text());
   const data = await res.json();
+  state.tree = data.tree;
+  if (data.tree && data.tree.chat_id) {
+    chatId = String(data.tree.chat_id);
+  }
   state.ornaments = data.ornaments;
   state.donatePacks = data.donate_packs || {};
   state.gramWallet = data.gram_wallet || "";
+  state.botUsername = data.bot_username || "";
+  state.webappUrl = data.webapp_url || window.location.origin;
   state.decorations = data.decorations || [];
   state.stats = data.stats || [];
   if (data.leaderboard) {
     state.leaderboard = data.leaderboard;
   }
   if (data.profile) {
-    state.coins = Number(data.profile.coins ?? state.coins);
-    state.clickPower = Number(data.profile.click_power ?? state.clickPower);
-    state.inventory = data.profile.inventory || state.inventory;
+    applyProfile(data.profile);
   }
   $("#chatTitle").textContent = data.tree.chat_title ? `${data.tree.chat_title}` : "Общая новогодняя ёлка";
   if (data.tree.is_finished) {
     $("#hint").textContent = "🎉 Ивент завершён! С Новым годом!";
   }
+  renderTreeSwitcher();
   updateHeaderAndClickerUI();
   renderPalette();
   renderShop();
@@ -1082,12 +1347,13 @@ async function refreshTreeData() {
 
 async function initLoadAndSync() {
   try {
-    await refreshTreeData();
+    await refreshTreeData(urlInviteCode);
     const backup = loadLocalBackup();
     if (backup) {
       const myServerDecs = state.decorations.filter((d) => d.user_id === state.myUserId);
       const needSync =
         (backup.coins && backup.coins > state.coins) ||
+        (backup.coin_turnover && backup.coin_turnover > state.coinTurnover) ||
         (backup.click_power && backup.click_power > state.clickPower) ||
         (myServerDecs.length === 0 && Array.isArray(backup.decorations) && backup.decorations.length > 0);
       if (needSync) {
@@ -1097,6 +1363,7 @@ async function initLoadAndSync() {
           body: JSON.stringify({
             chat_id: Number(chatId),
             coins: backup.coins,
+            coin_turnover: backup.coin_turnover,
             click_power: backup.click_power,
             inventory: backup.inventory,
             decorations: backup.decorations,
@@ -1148,7 +1415,6 @@ treeSvg.addEventListener("click", async (e) => {
   if (e.target.closest(".dec-item")) return;
 
   const pt = clientToPercent(e.clientX, e.clientY);
-  // Проверяем, что нажатие попало именно на крону ёлки, а не в небо или сугробы!
   if (!isPointInsideTree(pt.x, pt.y)) {
     haptic("light");
     spawnParticles(e.clientX, e.clientY, "#94a3b8", 6);
@@ -1212,7 +1478,6 @@ drawGarlandLights();
 drawTopStar();
 updateCountdown();
 setInterval(updateCountdown, 30000);
-// Периодическое обновление ёлки и лидерборда, чтобы видеть действия других игроков в реальном времени
 setInterval(() => {
   refreshTreeData().catch(() => {});
 }, 12000);

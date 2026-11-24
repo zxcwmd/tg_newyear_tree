@@ -5,12 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Новогодняя ёлка 🎄</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=5">
+<link rel="stylesheet" href="/static/style.css?v=6">
 </head>
 <body>
-<!-- Живой динамический фон (Северное сияние + 3D снег) -->
 <canvas id="bgCanvas"></canvas>
-<!-- Слой спецэффектов и частиц при кликах и украшении -->
 <canvas id="fxCanvas"></canvas>
 
 <div id="app">
@@ -27,12 +25,12 @@
     </div>
     <div class="badges">
       <div id="counter" class="counter-chip">✨ На ёлке: 0</div>
-      <div id="playersCountChip" class="counter-chip">👥 Игроков: 1</div>
+      <div id="turnoverChip" class="counter-chip">🔄 Оборот: 50 🪙</div>
       <div id="countdown" class="counter-chip countdown">⏳ До 1 января: ...</div>
     </div>
   </header>
 
-  <!-- Современная навигация (5 вкладок, включая отдельный Лидерборд) -->
+  <!-- Навигация (5 вкладок) -->
   <nav class="tabs-nav glass-panel">
     <button class="tab-btn active" data-tab="tree" type="button">
       <span class="t-icon">🎄</span>
@@ -58,23 +56,42 @@
 
   <!-- ВКЛАДКА 1: ЁЛКА -->
   <section id="tab-tree" class="tab-panel active">
+    <!-- Панель выбора ёлки и создания командной ёлки с друзьями -->
+    <div class="team-bar glass-panel">
+      <div class="team-bar-top">
+        <select id="treeSwitcher" class="tree-select">
+          <option value="1">🌍 Общая новогодняя ёлка</option>
+        </select>
+        <button id="openTeamModalBtn" class="team-action-btn" type="button">👥 + С друзьями</button>
+      </div>
+      <div id="teamShareRow" class="team-share-row hidden">
+        <span id="teamCodeLabel" class="team-code-label">Командная ёлка</span>
+        <button id="shareTeamBtn" class="share-team-btn" type="button">🔗 Пригласить друзей</button>
+      </div>
+    </div>
+
     <div id="treeWrap" class="tree-wrap glass-panel">
+      <!-- Переключатель сегментов (ярусов) ёлки для визуального увеличения -->
+      <div class="segment-bar">
+        <button class="seg-btn active" data-seg="all" type="button">🌲 Вся</button>
+        <button class="seg-btn" data-seg="top" type="button">⭐ Верх</button>
+        <button class="seg-btn" data-seg="mid" type="button">🎄 Середина</button>
+        <button class="seg-btn" data-seg="bot" type="button">🎁 Низ</button>
+      </div>
+
       <svg id="treeSvg" viewBox="0 0 400 500" preserveAspectRatio="xMidYMid meet">
         <defs>
-          <!-- Небо внутри сцены -->
           <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stop-color="#050b1a"/>
             <stop offset="55%" stop-color="#0d1b3a"/>
             <stop offset="100%" stop-color="#172a4f"/>
           </linearGradient>
-          <!-- Северное сияние в SVG -->
           <linearGradient id="auroraGrad" x1="0" y1="0" x2="1" y2="1">
             <stop offset="0%" stop-color="#10b981" stop-opacity="0.0"/>
             <stop offset="35%" stop-color="#10b981" stop-opacity="0.28"/>
             <stop offset="70%" stop-color="#38bdf8" stop-opacity="0.22"/>
             <stop offset="100%" stop-color="#a855f7" stop-opacity="0.0"/>
           </linearGradient>
-          <!-- Градиенты хвои с объёмом -->
           <linearGradient id="pineTop" x1="0.2" y1="0" x2="0.8" y2="1">
             <stop offset="0%" stop-color="#22c55e"/>
             <stop offset="45%" stop-color="#15803d"/>
@@ -90,20 +107,17 @@
             <stop offset="55%" stop-color="#14532d"/>
             <stop offset="100%" stop-color="#042f1a"/>
           </linearGradient>
-          <!-- Ствол с текстурой коры -->
           <linearGradient id="trunkGrad" x1="0" y1="0" x2="1" y2="0">
             <stop offset="0%" stop-color="#451a03"/>
             <stop offset="40%" stop-color="#78350f"/>
             <stop offset="70%" stop-color="#92400e"/>
             <stop offset="100%" stop-color="#3f1703"/>
           </linearGradient>
-          <!-- Сугробы -->
           <linearGradient id="snowDriftGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stop-color="#ffffff"/>
             <stop offset="55%" stop-color="#e2e8f0"/>
             <stop offset="100%" stop-color="#94a3b8"/>
           </linearGradient>
-          <!-- Свечение звезды и гирлянд -->
           <filter id="glowFilter" x="-40%" y="-40%" width="180%" height="180%">
             <feGaussianBlur stdDeviation="4" result="blur"/>
             <feMerge>
@@ -114,7 +128,6 @@
           <filter id="softShadow" x="-25%" y="-25%" width="150%" height="150%">
             <feDropShadow dx="0" dy="4" stdDeviation="3" flood-color="#000000" flood-opacity="0.45"/>
           </filter>
-          <!-- 3D градиенты для шаров -->
           <radialGradient id="ball_red" cx="32%" cy="28%" r="68%">
             <stop offset="0%" stop-color="#ffc2c7"/>
             <stop offset="28%" stop-color="#f43f5e"/>
@@ -159,29 +172,21 @@
           </radialGradient>
         </defs>
 
-        <!-- Ночное небо -->
         <rect width="400" height="500" fill="url(#skyGrad)" rx="18"/>
-        <!-- Волны северного сияния -->
         <path class="aurora-wave" d="M -20,90 Q 110,20 220,85 T 420,60 L 420,190 Q 260,140 140,185 T -20,160 Z" fill="url(#auroraGrad)"/>
-        <!-- Полумесяц со свечением -->
         <g filter="url(#glowFilter)" opacity="0.9">
           <path d="M 335,45 A 22,22 0 1,0 358,74 A 18,18 0 1,1 335,45 Z" fill="#fef08a"/>
         </g>
-        <!-- Снежинки и звёзды неба -->
         <g id="snow"></g>
 
-        <!-- Задние сугробы -->
         <ellipse cx="110" cy="462" rx="155" ry="34" fill="url(#snowDriftGrad)" opacity="0.88"/>
         <ellipse cx="300" cy="466" rx="145" ry="30" fill="url(#snowDriftGrad)" opacity="0.95"/>
-
-        <!-- Тень под ёлкой -->
         <ellipse cx="200" cy="458" rx="95" ry="14" fill="#020617" opacity="0.45"/>
 
-        <!-- Ствол ёлки -->
         <rect x="182" y="405" width="36" height="54" fill="url(#trunkGrad)" rx="6"/>
         <path d="M 190,410 L 190,455 M 204,412 L 204,455" stroke="#290f02" stroke-width="1.5" opacity="0.5"/>
 
-        <!-- НИЖНИЙ ЯРУС ЁЛКИ (пышная хвоя с волнистым краем) -->
+        <!-- Нижний ярус -->
         <path filter="url(#softShadow)" fill="url(#pineBot)"
           d="M 200,232
              C 155,295 108,365 66,422
@@ -190,11 +195,10 @@
              Q 235,442 268,424
              Q 302,438 334,422
              C 292,365 245,295 200,232 Z"/>
-        <!-- Снежная кромка нижнего яруса -->
         <path d="M 72,421 Q 100,434 132,422 Q 165,437 200,424 Q 235,437 268,422 Q 300,434 328,421"
           fill="none" stroke="#e2e8f0" stroke-width="4.5" stroke-linecap="round" opacity="0.75"/>
 
-        <!-- СРЕДНИЙ ЯРУС ЁЛКИ -->
+        <!-- Средний ярус -->
         <path filter="url(#softShadow)" fill="url(#pineMid)"
           d="M 200,142
              C 162,198 125,260 90,320
@@ -206,7 +210,7 @@
         <path d="M 96,319 Q 120,330 146,319 Q 173,332 200,320 Q 227,332 254,319 Q 280,330 304,319"
           fill="none" stroke="#f1f5f9" stroke-width="4" stroke-linecap="round" opacity="0.75"/>
 
-        <!-- ВЕРХНИЙ ЯРУС ЁЛКИ -->
+        <!-- Верхний ярус -->
         <path filter="url(#softShadow)" fill="url(#pineTop)"
           d="M 200,58
              C 172,108 144,160 116,212
@@ -223,16 +227,11 @@
         <path d="M 114,272 Q 200,312 286,266" fill="none" stroke="#1e293b" stroke-width="1.8" opacity="0.7"/>
         <path d="M 88,378 Q 200,422 312,370" fill="none" stroke="#1e293b" stroke-width="1.8" opacity="0.7"/>
 
-        <!-- Светящиеся лампочки гирлянды -->
         <g id="garlandLights" filter="url(#glowFilter)"></g>
-
-        <!-- Звезда на макушке -->
         <g id="topStar"></g>
-
-        <!-- Игрушки игроков -->
         <g id="decorLayer"></g>
       </svg>
-      <div id="hint" class="hint">Выбери игрушку из инвентаря и нажми прямо на ветки ёлки 👇</div>
+      <div id="hint" class="hint">Выбери сегмент ёлки сверху (Верх / Середина / Низ), чтобы приблизить ветки! 👇</div>
     </div>
 
     <div class="section-label">🎒 Твой инвентарь (нажми, чтобы выбрать):</div>
@@ -243,27 +242,26 @@
     </div>
   </section>
 
-  <!-- ВКЛАДКА 2: ЛИДЕРБОРД (ОТДЕЛЬНАЯ ВКЛАДКА) -->
+  <!-- ВКЛАДКА 2: ЛИДЕРБОРД -->
   <section id="tab-leaderboard" class="tab-panel">
     <div class="lb-header-card glass-panel">
       <div class="lb-title-row">
         <div>
           <h2>🏆 Таблица лидеров</h2>
-          <p>Соревнуйся с друзьями и другими игроками до 1 января!</p>
+          <p>Соревнуйся по игрушкам, обороту монет и командным ёлкам!</p>
         </div>
         <button id="refreshLbBtn" class="refresh-lb-btn" type="button" title="Обновить">🔄</button>
       </div>
-      <div class="lb-subtabs">
-        <button class="lb-subtab active" data-lb="by_toys" type="button">🎄 Все игроки</button>
-        <button class="lb-subtab" data-lb="by_coins" type="button">🪙 Богачи</button>
+      <div class="lb-subtabs lb-subtabs-4">
+        <button class="lb-subtab active" data-lb="by_toys" type="button">🎄 Игроки</button>
+        <button class="lb-subtab" data-lb="by_turnover" type="button">🔄 Оборот</button>
+        <button class="lb-subtab" data-lb="team_trees" type="button">🌲 Командные</button>
         <button class="lb-subtab" data-lb="chat_stats" type="button">💬 Эта ёлка</button>
       </div>
     </div>
 
-    <!-- Подиум Топ-3 -->
     <div id="lbPodium" class="lb-podium"></div>
 
-    <!-- Полный список игроков -->
     <div class="stats-box glass-panel">
       <ul id="leaderboardList" class="lb-list"></ul>
     </div>
@@ -276,11 +274,11 @@
         <span class="combo-pill" id="comboBadge">🔥 Комбо x1</span>
       </div>
       <h2>🪙 Новогодний кликер</h2>
-      <p class="clicker-sub">Тапай по золотому шару, копи монеты и закупайся редкими игрушками!</p>
+      <p class="clicker-sub">Каждая заработанная и потраченная монета увеличивает твой <b>оборот монет</b> в рейтинге!</p>
 
       <div class="clicker-stats-row">
         <div class="c-stat">
-          <span class="c-label">Твой баланс</span>
+          <span class="c-label">Баланс / Оборот</span>
           <b id="clickerCoins">50 🪙</b>
         </div>
         <div class="c-stat">
@@ -317,7 +315,7 @@
   <section id="tab-shop" class="tab-panel">
     <div class="shop-header-card glass-panel">
       <h2>🛍 Магазин украшений</h2>
-      <p>Покупай игрушки за нафармленные монеты 🪙 и наряжай общую ёлку!</p>
+      <p>Покупай игрушки за монеты 🪙 — покупки также идут в твой общий оборот монет!</p>
     </div>
     <div id="shopGrid" class="shop-grid"></div>
   </section>
@@ -326,10 +324,47 @@
   <section id="tab-donate" class="tab-panel">
     <div class="donate-header-card glass-panel">
       <h2>💎 Премиум и Донат</h2>
-      <p>Мгновенные наборы монет и королевские комплекты игрушек за <b>Telegram Stars ⭐️</b> или криптовалюту <b>GRAM 💎</b></p>
+      <p>Выгодные наборы за <b>Telegram Stars ⭐️</b> или <b>GRAM 💎</b> (цены в GRAM снижены в 5 раз + автовыдача сразу после оплаты!)</p>
     </div>
     <div id="donateList" class="donate-list"></div>
   </section>
+
+  <!-- Модалка создания / подключения к командной ёлке -->
+  <div id="teamModal" class="modal hidden">
+    <div class="modal-card glass-panel">
+      <div class="modal-header">
+        <span>👥 Командная ёлка с друзьями</span>
+        <button id="closeTeamModalBtn" class="close-btn" type="button">✕</button>
+      </div>
+      <div class="team-modal-body">
+        <p class="gram-desc">Создай свою командную ёлку, отправь ссылку друзьям и соревнуйтесь в рейтинге <b>«🌲 Командные ёлки»</b>!</p>
+        <label class="gram-label">Название вашей команды / ёлки:</label>
+        <input id="teamNameInput" class="text-input" type="text" placeholder="Например: Новогодняя банда 🎄" maxlength="40" />
+        <button id="createTeamBtn" class="confirm-gram-btn" type="button" style="width:100%; margin-bottom:14px;">
+          ✨ Создать командную ёлку
+        </button>
+
+        <div class="divider-line"><span>или войти по коду / ссылке друга</span></div>
+
+        <label class="gram-label">Код или ссылка приглашения:</label>
+        <div class="join-row">
+          <input id="joinCodeInput" class="text-input" type="text" placeholder="team_xxxxxx" />
+          <button id="joinTeamBtn" class="join-btn" type="button">Войти</button>
+        </div>
+
+        <div id="createdInviteBox" class="invite-result-box hidden">
+          <div class="invite-title">🎉 Командная ёлка готова! Отправь ссылку друзьям:</div>
+          <div class="wallet-box">
+            <code id="teamInviteLinkCode"></code>
+            <button id="copyTeamLinkBtn" class="copy-btn" type="button">📋</button>
+          </div>
+          <button id="tgShareTeamBtn" class="gram-pay-link" type="button" style="width:100%; border:none; cursor:pointer;">
+            📤 Отправить приглашение друзьям в Telegram
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Модалка открытки -->
   <div id="previewModal" class="modal hidden">
@@ -342,7 +377,7 @@
     </div>
   </div>
 
-  <!-- Модалка оплаты GRAM -->
+  <!-- Модалка оплаты GRAM с автовыдачей -->
   <div id="gramModal" class="modal hidden">
     <div class="modal-card glass-panel">
       <div class="modal-header">
@@ -352,20 +387,23 @@
       <div class="gram-body">
         <p id="gramPackDesc" class="gram-desc"></p>
         <div class="gram-price-box">
-          Сумма к оплате: <b id="gramAmountText">10 GRAM</b>
+          К оплате (скидка -80%): <b id="gramAmountText">1 GRAM</b>
         </div>
         <label class="gram-label">Кошелёк получателя (TON / GRAM):</label>
         <div class="wallet-box">
           <code id="gramWalletCode"></code>
           <button id="copyWalletBtn" class="copy-btn" type="button">📋</button>
         </div>
-        <label class="gram-label">Комментарий (MEMO) к переводу:</label>
+        <label class="gram-label">Комментарий (MEMO) для автовыдачи:</label>
         <div class="wallet-box">
           <code id="gramMemoCode"></code>
         </div>
+        <div id="gramAutoStatus" class="auto-status-box hidden">
+          <span class="spinner-dot">⏳</span>
+          <span id="gramAutoStatusText">Ожидание оплаты... Набор выдастся автоматически!</span>
+        </div>
         <div class="gram-actions">
-          <a id="gramDeepLink" href="#" target="_blank" class="gram-pay-link">💎 Открыть кошелёк (Tonkeeper / Wallet)</a>
-          <button id="confirmGramPaidBtn" class="confirm-gram-btn" type="button">✅ Я оплатил — получить набор</button>
+          <a id="gramDeepLink" href="#" target="_blank" class="gram-pay-link">💎 Оплатить в кошельке (Автовыдача)</a>
         </div>
       </div>
     </div>
@@ -373,6 +411,6 @@
 
   <div id="toast" class="toast"></div>
 </div>
-<script src="/static/app.js?v=5"></script>
+<script src="/static/app.js?v=6"></script>
 </body>
 </html>
