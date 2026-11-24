@@ -137,6 +137,25 @@ def _draw_candy(draw, x, y, color_hex):
     draw.line([(x - 5, y - 7), (x + 5, y + 7)], fill=(255, 255, 255), width=3)
 
 
+def _draw_angel(draw, x, y, color_hex):
+    rgb = _hex_to_rgb(color_hex)
+    # Крылышки
+    draw.polygon([(x, y), (x - 18, y - 10), (x - 14, y + 6)], fill=(255, 255, 255, 210))
+    draw.polygon([(x, y), (x + 18, y - 10), (x + 14, y + 6)], fill=(255, 255, 255, 210))
+    # Платье ангелочка
+    draw.polygon([(x, y - 4), (x - 11, y + 14), (x + 11, y + 14)], fill=rgb)
+    # Голова и нимб
+    draw.ellipse([x - 6, y - 14, x + 6, y - 2], fill=(255, 235, 205))
+    draw.ellipse([x - 8, y - 19, x + 8, y - 14], outline=(255, 215, 0), width=2)
+
+
+def _draw_crystal(draw, x, y, color_hex):
+    rgb = _hex_to_rgb(color_hex)
+    points = [(x, y - 18), (x + 13, y), (x, y + 18), (x - 13, y)]
+    draw.polygon(points, fill=rgb, outline=(255, 255, 255), width=2)
+    draw.polygon([(x, y - 10), (x + 6, y), (x, y + 10), (x - 6, y)], fill=(255, 255, 255, 180))
+
+
 DRAWERS = {
     "ball": _draw_ball,
     "star": lambda d, x, y, c: _draw_star(d, x, y, 20, _hex_to_rgb(c)),
@@ -144,6 +163,8 @@ DRAWERS = {
     "gift": _draw_gift,
     "bell": _draw_bell,
     "candy": _draw_candy,
+    "angel": _draw_angel,
+    "crystal": _draw_crystal,
 }
 
 

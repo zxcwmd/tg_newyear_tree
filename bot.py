@@ -123,13 +123,30 @@ async def cmd_start(message: Message):
             first_name=message.from_user.first_name or "Участник",
             last_name=message.from_user.last_name or "",
         )
-    # Проверяем реферальный / командный параметр (/start team_xxxx)
+    # Проверяем реферальный / командный параметр (/start team_xxxx или /start ref_12345)
     parts = (message.text or "").split(maxsplit=1)
     start_arg = parts[1].strip() if len(parts) > 1 else ""
-    if start_arg.startswith("team_"):
+    if start_arg.startswith("ref_"):
+        try:
+            ref_id = int(start_arg[4:])
+            bonus_ok = await db.apply_referral(uid, ref_id)
+            if bonus_ok:
+                await message.answer(
+                    "🎁 <b>Бонус за приглашение друга!</b>\n"
+                    "Ты и твой друг получили по <b>+300 🪙 монет</b>, <b>🎁 Подарок</b> и <b>⭐ Звезду</b> в инвентарь!"
+                )
+        except Exception:
+            pass
+    elif start_arg.startswith("team_"):
         team_tree = await db.get_tree_by_invite_code(start_arg)
         if team_tree:
             await db.add_team_member(team_tree["chat_id"], uid)
+            if team_tree.get("owner_id"):
+                bonus_ok = await db.apply_referral(uid, int(team_tree["owner_id"]))
+                if bonus_ok:
+                    await message.answer(
+                        "🎁 <b>Командный бонус!</b> Ты и создатель ёлки получили по <b>+300 🪙 монет</b>, <b>🎁 Подарок</b> и <b>⭐ Звезду</b>!"
+                    )
             await message.answer(
                 f"🎄 <b>Ты присоединился к командной ёлке «{team_tree.get('chat_title') or 'Друзья'}»!</b>\n\n"
                 "Нажимай кнопку ниже, чтобы наряжать эту ёлку вместе со своей командой 👇",

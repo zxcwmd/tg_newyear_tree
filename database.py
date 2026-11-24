@@ -1,8 +1,9 @@
 """Слой базы данных (SQLite + aiosqlite)."""
+import random
 import secrets
 import aiosqlite
-from datetime import datetime, timezone
-from config import DATABASE_PATH, DONATE_PACKS, ORNAMENTS
+from datetime import datetime, timedelta, timezone
+from config import DATABASE_PATH, DONATE_PACKS, LOOTBOX_PRICE, ORNAMENTS, TREE_THEMES
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS trees (
@@ -76,9 +77,17 @@ async def init_db():
             "ALTER TABLE users ADD COLUMN coins INTEGER NOT NULL DEFAULT 50",
             "ALTER TABLE users ADD COLUMN coin_turnover INTEGER NOT NULL DEFAULT 50",
             "ALTER TABLE users ADD COLUMN click_power INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE users ADD COLUMN last_daily_date TEXT DEFAULT ''",
+            "ALTER TABLE users ADD COLUMN daily_streak INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN referred_by INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN referrals_count INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE trees ADD COLUMN is_team INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE trees ADD COLUMN invite_code TEXT",
             "ALTER TABLE trees ADD COLUMN owner_id INTEGER",
+            "ALTER TABLE trees ADD COLUMN bg_theme TEXT NOT NULL DEFAULT 'aurora'",
+            "ALTER TABLE trees ADD COLUMN garland_style TEXT NOT NULL DEFAULT 'classic'",
+            "ALTER TABLE trees ADD COLUMN topper_type TEXT NOT NULL DEFAULT 'star'",
+            "ALTER TABLE decorations ADD COLUMN wish_text TEXT NOT NULL DEFAULT ''",
         ]:
             try:
                 await db.execute(col_sql)
@@ -257,9 +266,25 @@ async def get_user_profile(user_id: int) -> dict:
         inv_rows = await cur_inv.fetchall()
         inventory = {k: 0 for k in ORNAMENTS.keys()}
         for r in inv_rows:
-            inventory[r["ornament_type"]] = r["quantity"]
+            if r["ornament_type"] in inventory:
+                inventory[r["ornament_type"]] = r["quantity"]
         user_dict["inventory"] = inventory
         user_dict["team_trees"] = await get_user_team_trees(user_id)
+        # Адвент-календарь и рефералка: значения по умолчанию для старых строк
+        user_dict.setdefault("daily_streak", 0)
+        user_dict.setdefault("last_daily_date", "")
+        user_dict.setdefault("referred_by", 0)
+        user_dict.setdefault("referrals_count", 0)
+        try:
+            user_dict["daily_streak"] = int(user_dict.get("daily_streak") or 0)
+        except Exception:
+            user_dict["daily_streak"] = 0
+        try:
+            user_dict["referrals_count"] = int(user_dict.get("referrals_count") or 0)
+        except Exception:
+            user_dict["referrals_count"] = 0
+        today_str = datetime.now(timezone.utc).date().isoformat()
+        user_dict["can_claim_daily"] = str(user_dict.get("last_daily_date") or "") != today_str
         return user_dict
 
 
@@ -413,8 +438,166 @@ async def complete_order_or_pack(user_id: int, pack_id: str, order_id: int = 0) 
     return await get_user_profile(user_id)
 
 
-async def add_decoration(chat_id: int, user_id: int, ornament_type: str, color: str, x: float, y: float) -> int:
+async def apply_referral(user_id: int, referrer_id: int) -> bool:
+    """Начисляет бонус +300 монет и редкие игрушки и пригласившему, и приглашённому другу."""
+    if not referrer_id or user_id == referrer_id:
+        return False
+    await upsert_user(user_id)
+    await upsert_user(referrer_id)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT referred_by FROM users WHERE user_id = ?", (user_id,))
+        row = await cur.fetchone()
+        if not row or (row["referred_by"] and int(row["referred_by"]) != 0):
+            return False
+        await db.execute(
+            "UPDATE users SET referred_by = ?, coins = coins + 300, coin_turnover = coin_turnover + 300 WHERE user_id = ?",
+            (referrer_id, user_id),
+        )
+        await db.execute(
+            "UPDATE users SET referrals_count = COALESCE(referrals_count, 0) + 1, coins = coins + 300, coin_turnover = coin_turnover + 300 WHERE user_id = ?",
+            (referrer_id,),
+        )
+        for uid in (user_id, referrer_id):
+            for otype in ("gift", "star"):
+                await db.execute(
+                    """
+                    INSERT INTO inventory (user_id, ornament_type, quantity)
+                    VALUES (?, ?, 1)
+                    ON CONFLICT(user_id, ornament_type) DO UPDATE SET
+                        quantity = quantity + 1
+                    """,
+                    (uid, otype),
+                )
+        await db.commit()
+        return True
+
+
+ADVENT_REWARDS = [
+    {"day": 1, "coins": 150, "item": "ball", "title": "День 1: +150 🪙 и 🔴 Шар"},
+    {"day": 2, "coins": 250, "item": "candy", "title": "День 2: +250 🪙 и 🍬 Конфета"},
+    {"day": 3, "coins": 350, "item": "snowflake", "title": "День 3: +350 🪙 и ❄️ Снежинка"},
+    {"day": 4, "coins": 500, "item": "bell", "title": "День 4: +500 🪙 и 🔔 Колокольчик"},
+    {"day": 5, "coins": 700, "item": "gift", "title": "День 5: +700 🪙 и 🎁 Подарок"},
+    {"day": 6, "coins": 1000, "item": "star", "title": "День 6: +1000 🪙 и ⭐ Звезда"},
+    {"day": 7, "coins": 1500, "item": "crystal", "title": "День 7+: +1500 🪙, 💎 Кристалл и +1 к силе клика!"},
+]
+
+
+async def claim_daily_advent(user_id: int) -> tuple[bool, str, dict, dict]:
+    """Открытие ежедневного подарка Адвент-календаря под ёлкой."""
+    today_dt = datetime.now(timezone.utc).date()
+    today_str = today_dt.isoformat()
+    yesterday_str = (today_dt - timedelta(days=1)).isoformat()
+
+    profile = await get_user_profile(user_id)
+    last_date = str(profile.get("last_daily_date") or "")
+    if last_date == today_str:
+        return False, "Ты уже открывал сегодняшний подарок! Приходи завтра 🎄", {}, profile
+
+    prev_streak = int(profile.get("daily_streak") or 0)
+    new_streak = (prev_streak + 1) if last_date == yesterday_str else 1
+    reward_idx = min(new_streak, 7) - 1
+    reward = ADVENT_REWARDS[reward_idx]
+    coins_bonus = reward["coins"]
+    item_type = reward["item"]
+    power_bonus = 1 if new_streak >= 7 else 0
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """
+            UPDATE users SET
+                coins = coins + ?,
+                coin_turnover = coin_turnover + ?,
+                click_power = click_power + ?,
+                last_daily_date = ?,
+                daily_streak = ?
+            WHERE user_id = ?
+            """,
+            (coins_bonus, coins_bonus, power_bonus, today_str, new_streak, user_id),
+        )
+        await db.execute(
+            """
+            INSERT INTO inventory (user_id, ornament_type, quantity)
+            VALUES (?, ?, 1)
+            ON CONFLICT(user_id, ornament_type) DO UPDATE SET
+                quantity = quantity + 1
+            """,
+            (user_id, item_type),
+        )
+        await db.commit()
+
+    updated = await get_user_profile(user_id)
+    return True, f"🎁 {reward['title']}!", reward, updated
+
+
+async def open_lootbox(user_id: int) -> tuple[bool, str, dict, dict]:
+    """Новогодний Сюрприз-бокс (Гача) за монеты."""
+    profile = await get_user_profile(user_id)
+    if profile["coins"] < LOOTBOX_PRICE:
+        return False, f"Нужно {LOOTBOX_PRICE} 🪙 для открытия Сюрприз-бокса!", {}, profile
+
+    pool = [
+        {"weight": 26, "item": "gift", "coins": 40, "label": "🎁 Подарок + 40 🪙"},
+        {"weight": 24, "item": "star", "coins": 50, "label": "⭐ Звезда + 50 🪙"},
+        {"weight": 20, "item": "angel", "coins": 75, "label": "👼 Редкий Ангелочек + 75 🪙"},
+        {"weight": 15, "item": "crystal", "coins": 100, "label": "💎 Легендарный Кристалл + 100 🪙"},
+        {"weight": 15, "item": "bell", "coins": 300, "label": "🎰 ДЖЕКПОТ: 🔔 Колокольчик + 300 🪙!"},
+    ]
+    choices = [p for p in pool for _ in range(p["weight"])]
+    won = random.choice(choices)
+    net_coin_diff = won["coins"] - LOOTBOX_PRICE
+    turnover_add = LOOTBOX_PRICE + won["coins"]
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """
+            UPDATE users SET
+                coins = coins + ?,
+                coin_turnover = coin_turnover + ?
+            WHERE user_id = ?
+            """,
+            (net_coin_diff, turnover_add, user_id),
+        )
+        await db.execute(
+            """
+            INSERT INTO inventory (user_id, ornament_type, quantity)
+            VALUES (?, ?, 1)
+            ON CONFLICT(user_id, ornament_type) DO UPDATE SET
+                quantity = quantity + 1
+            """,
+            (user_id, won["item"]),
+        )
+        await db.commit()
+
+    updated = await get_user_profile(user_id)
+    return True, f"Выпало из бокса: {won['label']}", won, updated
+
+
+async def update_tree_style(chat_id: int, bg_theme: str, garland_style: str, topper_type: str) -> dict:
+    bg = bg_theme if bg_theme in TREE_THEMES["backgrounds"] else "aurora"
+    garland = garland_style if garland_style in TREE_THEMES["garlands"] else "classic"
+    topper = topper_type if topper_type in TREE_THEMES["toppers"] else "star"
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE trees SET bg_theme = ?, garland_style = ?, topper_type = ? WHERE chat_id = ?",
+            (bg, garland, topper, chat_id),
+        )
+        await db.commit()
+    return await get_tree(chat_id)
+
+
+async def add_decoration(
+    chat_id: int,
+    user_id: int,
+    ornament_type: str,
+    color: str,
+    x: float,
+    y: float,
+    wish_text: str = "",
+) -> int:
     now = datetime.now(timezone.utc).isoformat()
+    clean_wish = (wish_text or "").strip()[:120]
     async with aiosqlite.connect(DATABASE_PATH) as db:
         if chat_id < 0:
             await db.execute(
@@ -423,10 +606,10 @@ async def add_decoration(chat_id: int, user_id: int, ornament_type: str, color: 
             )
         cur = await db.execute(
             """
-            INSERT INTO decorations (chat_id, user_id, ornament_type, color, x, y, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO decorations (chat_id, user_id, ornament_type, color, x, y, wish_text, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (chat_id, user_id, ornament_type, color, x, y, now),
+            (chat_id, user_id, ornament_type, color, x, y, clean_wish, now),
         )
         await db.commit()
         return cur.lastrowid
@@ -535,12 +718,13 @@ async def sync_backup(
                     y = float(d.get("y", 50))
                     d_uid = int(d.get("user_id", user_id))
                     if d_uid == user_id and otype in ORNAMENTS and 0 <= x <= 100 and 0 <= y <= 100:
+                        wish = str(d.get("wish_text") or "").strip()[:120]
                         await db.execute(
                             """
-                            INSERT INTO decorations (chat_id, user_id, ornament_type, color, x, y, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            INSERT INTO decorations (chat_id, user_id, ornament_type, color, x, y, wish_text, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                             """,
-                            (chat_id, user_id, otype, color, x, y, now),
+                            (chat_id, user_id, otype, color, x, y, wish, now),
                         )
         await db.commit()
 

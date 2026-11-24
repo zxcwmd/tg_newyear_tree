@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Новогодняя ёлка 🎄</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=6">
+<link rel="stylesheet" href="/static/style.css?v=7">
 </head>
 <body>
 <canvas id="bgCanvas"></canvas>
@@ -234,8 +234,31 @@
       <div id="hint" class="hint">Выбери сегмент ёлки сверху (Верх / Середина / Низ), чтобы приблизить ветки! 👇</div>
     </div>
 
+    <!-- Ежедневный подарок, стиль ёлки и рефералка -->
+    <div class="daily-row glass-panel">
+      <button id="dailyGiftBtn" class="daily-gift-btn" type="button">
+        <span class="daily-gift-emoji">🎁</span>
+        <span class="daily-gift-text">Ежедневный подарок</span>
+        <span id="dailyStreakBadge" class="daily-streak-badge">Серия: 0 дн.</span>
+      </button>
+      <button id="openStyleModalBtn" class="style-btn" type="button">🎨 Стиль ёлки</button>
+    </div>
+    <div class="referral-row glass-panel">
+      <div class="referral-info">
+        <b>🎁 Пригласи друга — +300 🪙 обоим!</b>
+        <span id="referralCountLabel">Приглашено друзей: 0</span>
+      </div>
+      <button id="shareReferralBtn" class="referral-btn" type="button">📤 Пригласить друга</button>
+    </div>
+
     <div class="section-label">🎒 Твой инвентарь (нажми, чтобы выбрать):</div>
     <div id="palette" class="palette"></div>
+
+    <div class="wish-box glass-panel">
+      <label for="wishInput">💌 Пожелание к игрушке (необязательно):</label>
+      <input id="wishInput" class="text-input" type="text" placeholder="Например: С Новым годом, мама! ❤️" maxlength="120" />
+      <p class="wish-hint">Напиши тёплое пожелание — оно появится на игрушке, и любой сможет прочитать его, нажав на игрушку.</p>
+    </div>
 
     <div class="actions-bar">
       <button id="previewBtn" class="action-btn glass-btn" type="button">🖼 Посмотреть итоговую открытку 1 января</button>
@@ -409,8 +432,77 @@
     </div>
   </div>
 
+  <!-- Модалка Адвент-календаря -->
+  <div id="adventModal" class="modal hidden">
+    <div class="modal-card glass-panel">
+      <div class="modal-header">
+        <span>📅 Адвент-календарь</span>
+        <button id="closeAdventModalBtn" class="close-btn" type="button">✕</button>
+      </div>
+      <div class="advent-body">
+        <p class="gram-desc">Открывай подарок под ёлкой каждый день! Серия дней подряд даёт всё больше монет и редкие игрушки.</p>
+        <div id="adventStreakLabel" class="advent-streak">Твоя серия: 0 дн.</div>
+        <div id="adventGrid" class="advent-grid"></div>
+        <button id="claimDailyBtn" class="confirm-gram-btn" type="button" style="width:100%; margin-top:12px;">🎁 Открыть сегодняшний подарок</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модалка стиля ёлки -->
+  <div id="styleModal" class="modal hidden">
+    <div class="modal-card glass-panel">
+      <div class="modal-header">
+        <span>🎨 Стиль ёлки</span>
+        <button id="closeStyleModalBtn" class="close-btn" type="button">✕</button>
+      </div>
+      <div class="style-body">
+        <p class="gram-desc">Настрой фон, гирлянду и макушку — изменения увидят все на этой ёлке!</p>
+        <label class="gram-label">🌌 Фон:</label>
+        <div id="bgThemeOptions" class="style-options"></div>
+        <label class="gram-label">💡 Гирлянда:</label>
+        <div id="garlandOptions" class="style-options"></div>
+        <label class="gram-label">👑 Макушка:</label>
+        <div id="topperOptions" class="style-options"></div>
+        <button id="saveStyleBtn" class="confirm-gram-btn" type="button" style="width:100%; margin-top:14px;">✨ Применить стиль</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модалка игрушки: автор и пожелание -->
+  <div id="ornamentModal" class="modal hidden">
+    <div class="modal-card glass-panel">
+      <div class="modal-header">
+        <span id="ornamentModalTitle">🎄 Игрушка</span>
+        <button id="closeOrnamentModalBtn" class="close-btn" type="button">✕</button>
+      </div>
+      <div class="ornament-body">
+        <div id="ornamentAuthor" class="ornament-author"></div>
+        <div id="ornamentWishBox" class="ornament-wish-box hidden">
+          <div class="ornament-wish-title">💌 Пожелание:</div>
+          <div id="ornamentWishText" class="ornament-wish-text"></div>
+        </div>
+        <button id="removeOrnamentBtn" class="remove-ornament-btn hidden" type="button">🗑 Снять игрушку в инвентарь</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модалка результата Сюрприз-бокса -->
+  <div id="lootboxModal" class="modal hidden">
+    <div class="modal-card glass-panel">
+      <div class="modal-header">
+        <span>🎰 Твой приз!</span>
+        <button id="closeLootboxModalBtn" class="close-btn" type="button">✕</button>
+      </div>
+      <div class="lootbox-body">
+        <div id="lootboxPrizeEmoji" class="lootbox-prize-emoji">🎁</div>
+        <div id="lootboxPrizeText" class="lootbox-prize-text"></div>
+        <button id="lootboxOkBtn" class="confirm-gram-btn" type="button" style="width:100%; margin-top:14px;">Забрать приз 🎉</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
 </div>
-<script src="/static/app.js?v=6"></script>
+<script src="/static/app.js?v=7"></script>
 </body>
 </html>

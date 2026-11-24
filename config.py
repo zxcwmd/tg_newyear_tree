@@ -112,7 +112,51 @@ ORNAMENTS = {
             "silver": "#e9ecef",
         },
     },
+    "angel": {
+        "name": "Ангелочек",
+        "emoji": "👼",
+        "price": 350,
+        "colors": {
+            "gold": "#fde047",
+            "white": "#ffffff",
+            "pink": "#f472b6",
+        },
+    },
+    "crystal": {
+        "name": "Кристалл",
+        "emoji": "💎",
+        "price": 500,
+        "colors": {
+            "cyan": "#38bdf8",
+            "purple": "#c084fc",
+            "gold": "#facc15",
+        },
+    },
 }
+
+# Темы оформления ёлки (фон, гирлянда, макушка)
+TREE_THEMES = {
+    "backgrounds": {
+        "aurora": {"name": "🌌 Северное сияние", "top": "#050b1a", "mid": "#0d1b3a", "bot": "#172a4f"},
+        "fireplace": {"name": "🔥 Уютный камин", "top": "#2a0a0a", "mid": "#451a03", "bot": "#7c2d12"},
+        "forest": {"name": "🌲 Изумрудный лес", "top": "#022c22", "mid": "#064e3b", "bot": "#0f766e"},
+        "cyber": {"name": "🔮 Неоновая ночь", "top": "#1e1b4b", "mid": "#3b0764", "bot": "#701a75"},
+    },
+    "garlands": {
+        "classic": {"name": "🌈 Разноцветная", "colors": ["#fde047", "#f43f5e", "#38bdf8", "#34d399", "#c084fc"]},
+        "gold": {"name": "✨ Тёплое золото", "colors": ["#fef08a", "#fde047", "#f59e0b", "#fffbeb"]},
+        "ice": {"name": "❄️ Ледяной неон", "colors": ["#e0f2fe", "#38bdf8", "#818cf8", "#22d3ee"]},
+        "ruby": {"name": "❤️ Рубин и изумруд", "colors": ["#f43f5e", "#10b981", "#fde047", "#fb7185"]},
+    },
+    "toppers": {
+        "star": {"name": "⭐ Вифлеемская звезда", "emoji": "⭐"},
+        "crown": {"name": "👑 Золотая корона", "emoji": "👑"},
+        "angel": {"name": "👼 Рождественский ангел", "emoji": "👼"},
+        "snowflake": {"name": "❄️ Хрустальная снежинка", "emoji": "❄️"},
+    },
+}
+
+LOOTBOX_PRICE = 150
 
 # Донат-наборы за Telegram Stars (XTR) и криптовалюту GRAM (цены в GRAM снижены в 5 раз)
 DONATE_PACKS = {

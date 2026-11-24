@@ -7,6 +7,16 @@ if (tg) {
 const params = new URLSearchParams(window.location.search);
 const rawUrlChat = params.get("chat_id") || params.get("startapp") || tg?.initDataUnsafe?.start_param || "";
 const urlInviteCode = params.get("invite") || (String(rawUrlChat).startsWith("team_") ? String(rawUrlChat) : "");
+// Рефералка: ?ref=12345 или /start ref_12345
+let urlReferrerId = Number(params.get("ref") || params.get("referrer_id") || 0);
+if (!urlReferrerId) {
+  const sp = String(tg?.initDataUnsafe?.start_param || params.get("startapp") || "");
+  if (sp.startsWith("ref_")) {
+    const n = Number(sp.slice(4));
+    if (!Number.isNaN(n) && n > 0) urlReferrerId = n;
+  }
+}
+// (проверка «не сам на себя» — после определения currentUser ниже)
 
 function normalizeChatId(val) {
   const n = Number(val);
@@ -42,7 +52,8 @@ function getPersistentUser() {
 }
 
 const currentUser = getPersistentUser();
-const BACKUP_KEY = `ny_backup_v6_${currentUser.id}`;
+if (urlReferrerId && urlReferrerId === Number(currentUser.id)) urlReferrerId = 0;
+const BACKUP_KEY = `ny_backup_v7_${currentUser.id}`;
 
 let state = {
   tree: null,
@@ -70,6 +81,14 @@ let state = {
   combo: 1,
   lastClickAt: 0,
   activeGramOrder: null,
+  treeThemes: null,
+  lootboxPrice: 150,
+  adventRewards: [],
+  dailyStreak: 0,
+  canClaimDaily: true,
+  referralsCount: 0,
+  styleDraft: { bg_theme: "aurora", garland_style: "classic", topper_type: "star" },
+  activeOrnament: null,
 };
 
 let dragState = null;
@@ -344,6 +363,9 @@ function loadLocalBackup() {
   try {
     const raw = localStorage.getItem(BACKUP_KEY);
     if (raw) return JSON.parse(raw);
+    // Миграция со старого ключа v6
+    const oldRaw = localStorage.getItem(`ny_backup_v6_${currentUser.id}`);
+    if (oldRaw) return JSON.parse(oldRaw);
   } catch (e) {}
   return null;
 }
@@ -420,6 +442,9 @@ function applyProfile(profile) {
   state.coins = Number(profile.coins ?? state.coins);
   state.coinTurnover = Number(profile.coin_turnover ?? Math.max(state.coinTurnover, state.coins));
   state.clickPower = Number(profile.click_power ?? state.clickPower);
+  state.dailyStreak = Number(profile.daily_streak ?? state.dailyStreak ?? 0);
+  state.canClaimDaily = profile.can_claim_daily !== false;
+  state.referralsCount = Number(profile.referrals_count ?? state.referralsCount ?? 0);
   if (profile.inventory) {
     state.inventory = { ...state.inventory, ...profile.inventory };
   }
@@ -428,9 +453,19 @@ function applyProfile(profile) {
     renderTreeSwitcher();
   }
   updateHeaderAndClickerUI();
+  updateDailyUI();
   renderPalette();
   renderShop();
   saveBackup();
+}
+
+function updateDailyUI() {
+  const badge = $("#dailyStreakBadge");
+  if (badge) badge.textContent = `Серия: ${state.dailyStreak} дн.`;
+  const btn = $("#dailyGiftBtn");
+  if (btn) btn.classList.toggle("ready", !!state.canClaimDaily);
+  const lbl = $("#referralCountLabel");
+  if (lbl) lbl.textContent = `Приглашено друзей: ${state.referralsCount}`;
 }
 
 function updateHeaderAndClickerUI() {
@@ -619,10 +654,17 @@ function drawSnowAndStars() {
   }
 }
 
+function getGarlandColors() {
+  const styleKey = state.tree?.garland_style || "classic";
+  const theme = state.treeThemes?.garlands?.[styleKey];
+  if (theme && Array.isArray(theme.colors) && theme.colors.length) return theme.colors;
+  return ["#fde047", "#f43f5e", "#38bdf8", "#34d399", "#c084fc"];
+}
+
 function drawGarlandLights() {
   const g = $("#garlandLights");
   g.innerHTML = "";
-  const colors = ["#fde047", "#f43f5e", "#38bdf8", "#34d399", "#c084fc"];
+  const colors = getGarlandColors();
   const wires = [
     { x1: 140, y1: 165, cx: 200, cy: 198, x2: 260, y2: 160, count: 5 },
     { x1: 114, y1: 272, cx: 200, cy: 312, x2: 286, y2: 266, count: 6 },
@@ -652,9 +694,51 @@ function drawGarlandLights() {
 function drawTopStar() {
   const g = $("#topStar");
   g.innerHTML = "";
+  const topper = state.tree?.topper_type || "star";
   g.appendChild(svgEl("circle", { cx: 200, cy: 48, r: 28, fill: "#fde047", opacity: 0.22, filter: "url(#glowFilter)" }));
-  g.appendChild(starShape(200, 48, 24, "#fde047", "#ca8a04"));
-  g.appendChild(starShape(200, 48, 12, "#fef9c3", "none"));
+  if (topper === "crown") {
+    g.appendChild(svgEl("path", {
+      d: "M 178,58 L 176,34 L 190,46 L 200,28 L 210,46 L 224,34 L 222,58 Z",
+      fill: "#facc15", stroke: "#92400e", "stroke-width": 1.5, "stroke-linejoin": "round",
+    }));
+    g.appendChild(svgEl("circle", { cx: 200, cy: 50, r: 4, fill: "#ef4444" }));
+    g.appendChild(svgEl("circle", { cx: 186, cy: 52, r: 3, fill: "#38bdf8" }));
+    g.appendChild(svgEl("circle", { cx: 214, cy: 52, r: 3, fill: "#34d399" }));
+  } else if (topper === "angel") {
+    g.appendChild(svgEl("circle", { cx: 200, cy: 40, r: 9, fill: "#fde68a", stroke: "#92400e", "stroke-width": 1.2 }));
+    g.appendChild(svgEl("path", { d: "M 186,52 Q 200,44 214,52 L 210,68 Q 200,62 190,68 Z", fill: "#ffffff", stroke: "#cbd5e1", "stroke-width": 1.2 }));
+    g.appendChild(svgEl("ellipse", { cx: 184, cy: 48, rx: 9, ry: 4.5, fill: "#ffffff", opacity: 0.9, transform: "rotate(-25 184 48)" }));
+    g.appendChild(svgEl("ellipse", { cx: 216, cy: 48, rx: 9, ry: 4.5, fill: "#ffffff", opacity: 0.9, transform: "rotate(25 216 48)" }));
+    g.appendChild(svgEl("circle", { cx: 200, cy: 28, r: 5, fill: "none", stroke: "#fde047", "stroke-width": 2 }));
+  } else if (topper === "snowflake") {
+    for (let a = 0; a < 360; a += 60) {
+      const rad = (a * Math.PI) / 180;
+      g.appendChild(svgEl("line", {
+        x1: 200, y1: 48, x2: 200 + 20 * Math.cos(rad), y2: 48 + 20 * Math.sin(rad),
+        stroke: "#e0f2fe", "stroke-width": 3.5, "stroke-linecap": "round",
+      }));
+    }
+    g.appendChild(svgEl("circle", { cx: 200, cy: 48, r: 6, fill: "#ffffff" }));
+    g.appendChild(svgEl("circle", { cx: 200, cy: 48, r: 3, fill: "#38bdf8" }));
+  } else {
+    g.appendChild(starShape(200, 48, 24, "#fde047", "#ca8a04"));
+    g.appendChild(starShape(200, 48, 12, "#fef9c3", "none"));
+  }
+}
+
+function applyTreeTheme() {
+  const bgKey = state.tree?.bg_theme || "aurora";
+  const theme = state.treeThemes?.backgrounds?.[bgKey];
+  if (theme) {
+    const stops = document.querySelectorAll("#skyGrad stop");
+    if (stops.length >= 3) {
+      stops[0].setAttribute("stop-color", theme.top || "#050b1a");
+      stops[1].setAttribute("stop-color", theme.mid || "#0d1b3a");
+      stops[2].setAttribute("stop-color", theme.bot || "#172a4f");
+    }
+  }
+  drawGarlandLights();
+  drawTopStar();
 }
 
 function starShape(cx, cy, r, fillColor, strokeColor = "#b45309") {
@@ -739,6 +823,22 @@ function ornamentShape(type, colorName, colorHex, x, y) {
     g.appendChild(svgEl("circle", { cx: 0, cy: 0, r: 9.5, fill: fillVal, stroke: "rgba(255,255,255,0.35)", "stroke-width": 0.8 }));
     g.appendChild(svgEl("path", { d: "M -6,-5 Q 0,0 6,5 M -6,5 Q 0,0 6,-5", stroke: "#ffffff", "stroke-width": 2.2, "stroke-linecap": "round", opacity: 0.85 }));
     g.appendChild(svgEl("circle", { cx: -3, cy: -3.5, r: 2.2, fill: "#ffffff", opacity: 0.65 }));
+  } else if (type === "angel") {
+    g.appendChild(svgEl("circle", { cx: 0, cy: -8, r: 7, fill: colorHex, stroke: "#b45309", "stroke-width": 1 }));
+    g.appendChild(svgEl("path", { d: "M -10,10 Q 0,2 10,10 L 8,14 Q 0,10 -8,14 Z", fill: "#ffffff", stroke: "#cbd5e1", "stroke-width": 1 }));
+    g.appendChild(svgEl("ellipse", { cx: -11, cy: -2, rx: 7, ry: 3.5, fill: "#ffffff", opacity: 0.9, transform: "rotate(-30 -11 -2)" }));
+    g.appendChild(svgEl("ellipse", { cx: 11, cy: -2, rx: 7, ry: 3.5, fill: "#ffffff", opacity: 0.9, transform: "rotate(30 11 -2)" }));
+    g.appendChild(svgEl("circle", { cx: 0, cy: -18, r: 4, fill: "none", stroke: "#fde047", "stroke-width": 1.8 }));
+    g.appendChild(svgEl("circle", { cx: -2.5, cy: -9, r: 1.2, fill: "#1e293b" }));
+    g.appendChild(svgEl("circle", { cx: 2.5, cy: -9, r: 1.2, fill: "#1e293b" }));
+  } else if (type === "crystal") {
+    g.appendChild(svgEl("path", {
+      d: "M 0,-14 L 9,-4 L 6,12 L -6,12 L -9,-4 Z",
+      fill: colorHex, stroke: "#ffffff", "stroke-width": 1.2, opacity: 0.95,
+    }));
+    g.appendChild(svgEl("path", { d: "M 0,-14 L 0,12 M -9,-4 L 9,-4", stroke: "#ffffff", "stroke-width": 1, opacity: 0.7 }));
+    g.appendChild(svgEl("path", { d: "M -4,-10 L -1,-5 L -4,2", stroke: "#ffffff", "stroke-width": 1.6, fill: "none", opacity: 0.9 }));
+    g.appendChild(svgEl("circle", { cx: 0, cy: 0, r: 16, fill: colorHex, opacity: 0.18 }));
   }
   return g;
 }
@@ -751,15 +851,20 @@ function renderDecorations() {
     const y = (d.y / 100) * 500;
     const el = ornamentShape(d.ornament_type, d.color, colorHex, x, y);
     el.dataset.id = d.id;
+    // Индикатор пожелания 💌
+    if (d.wish_text && String(d.wish_text).trim()) {
+      const badge = svgEl("text", {
+        x: 11, y: -12, "font-size": 11, class: "wish-badge",
+        style: "pointer-events:none",
+      });
+      badge.textContent = "💌";
+      el.appendChild(badge);
+    }
 
     el.addEventListener("pointerdown", (e) => {
       e.stopPropagation();
-      if (state.myUserId && d.user_id !== state.myUserId) {
-        const owner = d.username ? `@${d.username}` : (d.first_name || "Другой игрок");
-        toast(`🎄 Эту игрушку повесил(а): ${owner}`);
-        return;
-      }
-      el.setPointerCapture(e.pointerId);
+      const isOwn = !state.myUserId || d.user_id === state.myUserId;
+      try { el.setPointerCapture(e.pointerId); } catch (err) {}
       dragState = {
         dec: d,
         el,
@@ -768,6 +873,7 @@ function renderDecorations() {
         moved: false,
         curX: d.x,
         curY: d.y,
+        readOnly: !isOwn,
       };
     });
 
@@ -775,7 +881,7 @@ function renderDecorations() {
       if (!dragState || dragState.dec.id !== d.id) return;
       const dist = Math.hypot(e.clientX - dragState.startX, e.clientY - dragState.startY);
       if (dist > 6) dragState.moved = true;
-      if (dragState.moved) {
+      if (dragState.moved && !dragState.readOnly) {
         const rawPt = clientToPercent(e.clientX, e.clientY);
         const clamped = clampToTree(rawPt.x, rawPt.y);
         dragState.curX = clamped.x;
@@ -791,11 +897,11 @@ function renderDecorations() {
       setTimeout(() => { suppressNextTreeClick = false; }, 120);
       const finishedDrag = dragState;
       dragState = null;
-      if (finishedDrag.moved) {
+      if (finishedDrag.moved && !finishedDrag.readOnly) {
         spawnParticles(e.clientX, e.clientY, colorHex, 14);
         await saveMoveDecoration(d.id, finishedDrag.curX, finishedDrag.curY);
-      } else {
-        await onDecorationClick(d);
+      } else if (!finishedDrag.moved) {
+        openOrnamentModal(d);
       }
     });
 
@@ -989,6 +1095,19 @@ function renderShop() {
   const grid = $("#shopGrid");
   if (!grid) return;
   grid.innerHTML = "";
+  // 🎰 Сюрприз-бокс (Гача) — карточка сверху
+  const loot = document.createElement("div");
+  loot.className = "lootbox-card";
+  loot.innerHTML = `
+    <div class="s-emoji">🎰</div>
+    <div class="s-title">Новогодний Сюрприз-бокс</div>
+    <p>Гача за <b>${state.lootboxPrice} 🪙</b>: редкие 👼 Ангелочек и 💎 Кристалл, игрушки и джекпот до 300 🪙!</p>
+    <button type="button" class="buy-coin-btn" id="lootboxOpenBtn">Открыть за ${state.lootboxPrice} 🪙</button>
+  `;
+  loot.querySelector("#lootboxOpenBtn").addEventListener("click", (ev) => {
+    openLootbox(ev.clientX, ev.clientY);
+  });
+  grid.appendChild(loot);
   for (const [type, info] of Object.entries(state.ornaments)) {
     const qty = Number(state.inventory?.[type] || 0);
     const card = document.createElement("div");
@@ -1036,6 +1155,184 @@ function renderDonateShop() {
     card.querySelector(".pay-gram-btn").addEventListener("click", () => openGramModal(packId));
     list.appendChild(card);
   }
+}
+
+// ============================================================================
+// 9b. АДВЕНТ-КАЛЕНДАРЬ, СТИЛЬ ЁЛКИ, ЛУТБОКС, РЕФЕРАЛКА, КАРТОЧКА ИГРУШКИ
+// ============================================================================
+function renderAdventModal() {
+  const grid = $("#adventGrid");
+  if (!grid) return;
+  grid.innerHTML = "";
+  const rewards = state.adventRewards && state.adventRewards.length ? state.adventRewards : [
+    { day: 1, coins: 150, item: "ball", title: "День 1" },
+    { day: 2, coins: 250, item: "candy", title: "День 2" },
+    { day: 3, coins: 350, item: "snowflake", title: "День 3" },
+    { day: 4, coins: 500, item: "bell", title: "День 4" },
+    { day: 5, coins: 700, item: "gift", title: "День 5" },
+    { day: 6, coins: 1000, item: "star", title: "День 6" },
+    { day: 7, coins: 1500, item: "crystal", title: "День 7+" },
+  ];
+  const streak = Number(state.dailyStreak || 0);
+  const nextDay = Math.min(streak + 1, 7);
+  for (const r of rewards) {
+    const day = Number(r.day);
+    const cell = document.createElement("div");
+    let cls = "advent-day";
+    if (day <= streak) cls += " done";
+    else if (day === nextDay && state.canClaimDaily) cls += " today";
+    else cls += " locked";
+    const emoji = state.ornaments?.[r.item]?.emoji || "🎁";
+    cell.className = cls;
+    cell.innerHTML = `<span class="ad-emoji">${day <= streak ? "✅" : emoji}</span><b>День ${day}</b><br>+${r.coins} 🪙`;
+    grid.appendChild(cell);
+  }
+  const lbl = $("#adventStreakLabel");
+  if (lbl) lbl.textContent = `Твоя серия: ${streak} дн. ${state.canClaimDaily ? "— подарок ждёт! 🎁" : "— приходи завтра!"}`;
+  const claimBtn = $("#claimDailyBtn");
+  if (claimBtn) {
+    claimBtn.disabled = !state.canClaimDaily;
+    claimBtn.textContent = state.canClaimDaily ? "🎁 Открыть сегодняшний подарок" : "✅ Сегодня уже открыто — приходи завтра!";
+  }
+}
+
+async function claimDailyAdvent() {
+  try {
+    const res = await fetch("/api/daily-claim", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ init_data: initData, user: currentUser }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Не удалось открыть");
+    haptic("medium");
+    if (data.profile) applyProfile(data.profile);
+    toast(data.message || "Подарок получен! 🎁");
+    renderAdventModal();
+    await refreshTreeData();
+  } catch (err) {
+    toast(err.message || "Не удалось открыть подарок", true);
+  }
+}
+
+function renderStyleModal() {
+  const themes = state.treeThemes;
+  if (!themes) return;
+  state.styleDraft = {
+    bg_theme: state.tree?.bg_theme || "aurora",
+    garland_style: state.tree?.garland_style || "classic",
+    topper_type: state.tree?.topper_type || "star",
+  };
+  const mk = (containerId, dict, key) => {
+    const box = document.getElementById(containerId);
+    if (!box) return;
+    box.innerHTML = "";
+    for (const [k, v] of Object.entries(dict || {})) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "style-opt" + (state.styleDraft[key] === k ? " selected" : "");
+      b.textContent = v.name || k;
+      b.onclick = () => {
+        state.styleDraft[key] = k;
+        haptic("light");
+        renderStyleModal();
+      };
+      box.appendChild(b);
+    }
+  };
+  mk("bgThemeOptions", themes.backgrounds, "bg_theme");
+  mk("garlandOptions", themes.garlands, "garland_style");
+  mk("topperOptions", themes.toppers, "topper_type");
+}
+
+async function saveTreeStyle() {
+  try {
+    const res = await fetch("/api/tree-style", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: Number(chatId),
+        bg_theme: state.styleDraft.bg_theme,
+        garland_style: state.styleDraft.garland_style,
+        topper_type: state.styleDraft.topper_type,
+        init_data: initData,
+        user: currentUser,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Не удалось сохранить");
+    state.tree = data.tree;
+    applyTreeTheme();
+    haptic("medium");
+    toast(data.message || "Стиль ёлки обновлён! 🎨");
+    $("#styleModal").classList.add("hidden");
+  } catch (err) {
+    toast(err.message || "Не удалось сохранить стиль", true);
+  }
+}
+
+async function openLootbox(clientX, clientY) {
+  await flushPendingClicks();
+  try {
+    const res = await fetch("/api/lootbox", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ init_data: initData, user: currentUser }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Не удалось открыть бокс");
+    haptic("medium");
+    if (clientX && clientY) spawnParticles(clientX, clientY, "#c084fc", 30);
+    if (data.profile) applyProfile(data.profile);
+    const prize = data.prize || {};
+    const emoji = state.ornaments?.[prize.item]?.emoji || "🎁";
+    $("#lootboxPrizeEmoji").textContent = emoji;
+    $("#lootboxPrizeText").textContent = data.message || "Приз получен!";
+    $("#lootboxModal").classList.remove("hidden");
+    await refreshTreeData();
+  } catch (err) {
+    toast(err.message || "Не хватает монет на бокс", true);
+  }
+}
+
+function getReferralLink() {
+  if (state.botUsername) return `https://t.me/${state.botUsername}?start=ref_${currentUser.id}`;
+  return `${window.location.origin}/?ref=${currentUser.id}`;
+}
+
+async function shareReferral() {
+  const link = getReferralLink();
+  const text = `🎄 Приходи наряжать новогоднюю ёлку со мной! За регистрацию по моей ссылке мы оба получим +300 🪙 и игрушки 🎁⭐`;
+  haptic("light");
+  if (tg?.openTelegramLink) {
+    try { tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`); return; } catch (e) {}
+  }
+  try {
+    await navigator.clipboard.writeText(link);
+    toast("Ссылка скопирована! Отправь её другу 🎁");
+  } catch (e) {
+    toast(link);
+  }
+}
+
+function openOrnamentModal(d) {
+  state.activeOrnament = d;
+  const info = state.ornaments?.[d.ornament_type];
+  const owner = d.username ? `@${d.username}` : (d.first_name || "Другой игрок");
+  const isOwn = !state.myUserId || d.user_id === state.myUserId;
+  $("#ornamentModalTitle").textContent = `${info?.emoji || "🎄"} ${info?.name || "Игрушка"}`;
+  $("#ornamentAuthor").textContent = `Повесил(а): ${owner}${isOwn ? " (это ты!)" : ""}`;
+  const wish = (d.wish_text || "").trim();
+  const wishBox = $("#ornamentWishBox");
+  if (wish) {
+    wishBox.classList.remove("hidden");
+    $("#ornamentWishText").textContent = wish;
+  } else {
+    wishBox.classList.add("hidden");
+  }
+  $("#removeOrnamentBtn").classList.toggle("hidden", !isOwn);
+  $("#ornamentModal").classList.remove("hidden");
+  haptic("light");
 }
 
 async function buyOrnamentWithCoins(ornamentType, clientX, clientY) {
@@ -1311,6 +1608,7 @@ async function refreshTreeData(inviteOverride = "") {
     invite_code: inviteOverride,
     t: String(Date.now()),
   });
+  if (urlReferrerId) q.set("referrer_id", String(urlReferrerId));
   const res = await fetch(`/api/tree/${chatId}?${q.toString()}`, { cache: "no-store" });
   if (!res.ok) throw new Error(await res.text());
   const data = await res.json();
@@ -1323,6 +1621,9 @@ async function refreshTreeData(inviteOverride = "") {
   state.gramWallet = data.gram_wallet || "";
   state.botUsername = data.bot_username || "";
   state.webappUrl = data.webapp_url || window.location.origin;
+  state.treeThemes = data.tree_themes || state.treeThemes;
+  state.lootboxPrice = Number(data.lootbox_price || 150);
+  state.adventRewards = data.advent_rewards || state.adventRewards;
   state.decorations = data.decorations || [];
   state.stats = data.stats || [];
   if (data.leaderboard) {
@@ -1331,12 +1632,18 @@ async function refreshTreeData(inviteOverride = "") {
   if (data.profile) {
     applyProfile(data.profile);
   }
+  if (data.referral_bonus_applied) {
+    toast("🎁 Бонус за приглашение: +300 🪙 и игрушки обоим!");
+    urlReferrerId = 0;
+  }
   $("#chatTitle").textContent = data.tree.chat_title ? `${data.tree.chat_title}` : "Общая новогодняя ёлка";
   if (data.tree.is_finished) {
     $("#hint").textContent = "🎉 Ивент завершён! С Новым годом!";
   }
   renderTreeSwitcher();
   updateHeaderAndClickerUI();
+  updateDailyUI();
+  applyTreeTheme();
   renderPalette();
   renderShop();
   renderDonateShop();
@@ -1383,12 +1690,13 @@ async function initLoadAndSync() {
 }
 
 async function onDecorationClick(d) {
-  if (state.myUserId && d.user_id !== state.myUserId) {
-    const owner = d.username ? `@${d.username}` : (d.first_name || "Другой игрок");
-    toast(`🎄 Эту игрушку повесил(а): ${owner}`);
-    return;
-  }
-  if (!confirm("Снять эту игрушку с ёлки обратно в инвентарь?")) return;
+  // Тап по игрушке — карточка с автором и пожеланием (снятие — кнопкой внутри)
+  openOrnamentModal(d);
+}
+
+async function removeActiveOrnament() {
+  const d = state.activeOrnament;
+  if (!d) return;
   try {
     const res = await fetch("/api/delete", {
       method: "POST",
@@ -1403,6 +1711,8 @@ async function onDecorationClick(d) {
     if (!res.ok) throw new Error(data.detail || "Ошибка");
     toast("Игрушка возвращена в инвентарь 🎒");
     haptic("medium");
+    $("#ornamentModal").classList.add("hidden");
+    state.activeOrnament = null;
     if (data.profile) applyProfile(data.profile);
     await refreshTreeData();
   } catch {
@@ -1429,6 +1739,7 @@ treeSvg.addEventListener("click", async (e) => {
     return;
   }
 
+  const wishText = ($("#wishInput")?.value || "").trim().slice(0, 120);
   try {
     const res = await fetch("/api/decorate", {
       method: "POST",
@@ -1439,6 +1750,7 @@ treeSvg.addEventListener("click", async (e) => {
         color: state.selectedColor,
         x: pt.x,
         y: pt.y,
+        wish_text: wishText,
         init_data: initData,
         user: currentUser,
       }),
@@ -1450,7 +1762,8 @@ treeSvg.addEventListener("click", async (e) => {
     const colorHex = state.ornaments[state.selectedType]?.colors?.[state.selectedColor] || "#fde047";
     spawnParticles(e.clientX, e.clientY, colorHex, 26);
     haptic("medium");
-    toast("Игрушка повешена на ёлку! ✨");
+    toast(wishText ? "Игрушка с пожеланием повешена! 💌" : "Игрушка повешена на ёлку! ✨");
+    if ($("#wishInput")) $("#wishInput").value = "";
     if (data.profile) applyProfile(data.profile);
     await refreshTreeData();
   } catch (err) {
@@ -1472,6 +1785,33 @@ $("#previewModal").addEventListener("click", (e) => {
     $("#previewModal").classList.add("hidden");
   }
 });
+
+// --- v7: Адвент, стиль, рефералка, игрушка, лутбокс ---
+$("#dailyGiftBtn").addEventListener("click", () => {
+  renderAdventModal();
+  $("#adventModal").classList.remove("hidden");
+});
+$("#closeAdventModalBtn").addEventListener("click", () => $("#adventModal").classList.add("hidden"));
+$("#adventModal").addEventListener("click", (e) => { if (e.target === $("#adventModal")) $("#adventModal").classList.add("hidden"); });
+$("#claimDailyBtn").addEventListener("click", claimDailyAdvent);
+
+$("#openStyleModalBtn").addEventListener("click", () => {
+  renderStyleModal();
+  $("#styleModal").classList.remove("hidden");
+});
+$("#closeStyleModalBtn").addEventListener("click", () => $("#styleModal").classList.add("hidden"));
+$("#styleModal").addEventListener("click", (e) => { if (e.target === $("#styleModal")) $("#styleModal").classList.add("hidden"); });
+$("#saveStyleBtn").addEventListener("click", saveTreeStyle);
+
+$("#shareReferralBtn").addEventListener("click", shareReferral);
+
+$("#closeOrnamentModalBtn").addEventListener("click", () => $("#ornamentModal").classList.add("hidden"));
+$("#ornamentModal").addEventListener("click", (e) => { if (e.target === $("#ornamentModal")) $("#ornamentModal").classList.add("hidden"); });
+$("#removeOrnamentBtn").addEventListener("click", removeActiveOrnament);
+
+$("#closeLootboxModalBtn").addEventListener("click", () => $("#lootboxModal").classList.add("hidden"));
+$("#lootboxOkBtn").addEventListener("click", () => $("#lootboxModal").classList.add("hidden"));
+$("#lootboxModal").addEventListener("click", (e) => { if (e.target === $("#lootboxModal")) $("#lootboxModal").classList.add("hidden"); });
 
 drawSnowAndStars();
 drawGarlandLights();
