@@ -107,19 +107,19 @@ async def cmd_start(message: Message):
             last_name=message.from_user.last_name or "",
         )
     if chat.type == "private":
-        await db.get_or_create_tree(chat.id, message.from_user.first_name if message.from_user else "Моя ёлка")
+        await db.get_or_create_tree(1, "Общая новогодняя ёлка")
         await message.answer(
             "🎄 Привет! Я — бот новогодней ёлки!\n\n"
             "• Фарми монеты в кликере 🪙\n"
             "• Покупай игрушки в магазине 🛍 или за ⭐️ Stars / 💎 GRAM\n"
-            "• Украшай ёлку вместе с друзьями до 1 января!\n\n"
-            "Добавь меня в групповой чат или открой свою ёлку кнопкой ниже 👇\n\n"
+            "• Украшай общую ёлку вместе с другими игроками и друзьями до 1 января!\n\n"
+            "Добавь меня в групповой чат или открой общую ёлку кнопкой ниже 👇\n\n"
             "Команды:\n"
             "/start — открыть ёлку\n"
             "/tree — показать текущую ёлку картинкой\n"
-            "/stats — кто сколько повесил\n"
+            "/stats — рейтинг игроков\n"
             "/help — помощь",
-            reply_markup=webapp_button(chat.id, "🎄 Открыть Новогоднюю ёлку"),
+            reply_markup=webapp_button(1, "🎄 Открыть Новогоднюю ёлку"),
         )
         return
 
@@ -143,33 +143,37 @@ async def cmd_start(message: Message):
 @dp.message(Command("tree"))
 async def cmd_tree(message: Message):
     chat = message.chat
-    tree = await db.get_tree(chat.id)
+    target_id = 1 if chat.type == "private" else chat.id
+    target_title = "Общая новогодняя ёлка" if chat.type == "private" else (chat.title or "Новогодняя ёлка")
+    tree = await db.get_tree(target_id)
     if not tree:
-        tree = await db.get_or_create_tree(chat.id, chat.title or "Новогодняя ёлка")
-    decorations = await db.get_decorations(chat.id)
-    png = generate_tree_image(decorations, title=f"Ёлка: {chat.title or 'Друзья'}")
+        tree = await db.get_or_create_tree(target_id, target_title)
+    decorations = await db.get_decorations(target_id)
+    png = generate_tree_image(decorations, title=f"Ёлка: {target_title}")
     photo = BufferedInputFile(png, filename="tree.png")
     await message.answer_photo(
         photo,
-        caption=f"🎄 Ёлка — игрушек на ёлке: <b>{len(decorations)}</b>",
-        reply_markup=webapp_button(chat.id),
+        caption=f"🎄 {target_title} — игрушек на ёлке: <b>{len(decorations)}</b>",
+        reply_markup=webapp_button(target_id),
     )
 
 
 @dp.message(Command("stats"))
 async def cmd_stats(message: Message):
     chat = message.chat
-    tree = await db.get_tree(chat.id)
+    target_id = 1 if chat.type == "private" else chat.id
+    target_title = "Общая новогодняя ёлка" if chat.type == "private" else (chat.title or "Чат")
+    tree = await db.get_tree(target_id)
     if not tree:
         await message.answer("Ёлка ещё не создана. Напиши /start 🎄")
         return
-    stats = await db.get_stats(chat.id)
-    decorations = await db.get_decorations(chat.id)
+    stats = await db.get_stats(target_id)
+    decorations = await db.get_decorations(target_id)
     await message.answer(
-        f"📊 <b>Итоги по ёлке «{chat.title or 'Чат'}»</b>\n\n"
+        f"📊 <b>Итоги по ёлке «{target_title}»</b>\n\n"
         f"Всего игрушек: <b>{len(decorations)}</b>\n\n"
         f"{format_stats(stats)}",
-        reply_markup=webapp_button(chat.id, "🎄 Украсить ещё"),
+        reply_markup=webapp_button(target_id, "🎄 Украсить ещё"),
     )
 
 

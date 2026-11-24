@@ -5,90 +5,295 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Новогодняя ёлка 🎄</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=3">
+<link rel="stylesheet" href="/static/style.css?v=5">
 </head>
 <body>
+<!-- Живой динамический фон (Северное сияние + 3D снег) -->
+<canvas id="bgCanvas"></canvas>
+<!-- Слой спецэффектов и частиц при кликах и украшении -->
+<canvas id="fxCanvas"></canvas>
+
 <div id="app">
-  <header>
+  <header class="glass-header">
     <div class="top-row">
-      <div>
+      <div class="brand-block">
         <h1>🎄 Новогодняя ёлка</h1>
         <p id="chatTitle" class="subtitle">Загрузка...</p>
       </div>
       <div class="balance-pill" id="balancePill" title="Твои монеты">
-        <span>🪙</span>
+        <span class="coin-icon">🪙</span>
         <span id="coinBalance">50</span>
       </div>
     </div>
     <div class="badges">
-      <div id="counter" class="counter">На ёлке: 0</div>
-      <div id="countdown" class="counter countdown">⏳ До 1 января: ...</div>
+      <div id="counter" class="counter-chip">✨ На ёлке: 0</div>
+      <div id="playersCountChip" class="counter-chip">👥 Игроков: 1</div>
+      <div id="countdown" class="counter-chip countdown">⏳ До 1 января: ...</div>
     </div>
   </header>
 
-  <!-- Навигация по вкладкам -->
-  <nav class="tabs-nav">
-    <button class="tab-btn active" data-tab="tree">🎄 Ёлка</button>
-    <button class="tab-btn" data-tab="clicker">🪙 Кликер</button>
-    <button class="tab-btn" data-tab="shop">🛍 Магазин</button>
-    <button class="tab-btn" data-tab="donate">💎 Донат</button>
+  <!-- Современная навигация (5 вкладок, включая отдельный Лидерборд) -->
+  <nav class="tabs-nav glass-panel">
+    <button class="tab-btn active" data-tab="tree" type="button">
+      <span class="t-icon">🎄</span>
+      <span class="t-text">Ёлка</span>
+    </button>
+    <button class="tab-btn" data-tab="leaderboard" type="button">
+      <span class="t-icon">🏆</span>
+      <span class="t-text">Топ</span>
+    </button>
+    <button class="tab-btn" data-tab="clicker" type="button">
+      <span class="t-icon">🪙</span>
+      <span class="t-text">Кликер</span>
+    </button>
+    <button class="tab-btn" data-tab="shop" type="button">
+      <span class="t-icon">🛍</span>
+      <span class="t-text">Магазин</span>
+    </button>
+    <button class="tab-btn" data-tab="donate" type="button">
+      <span class="t-icon">💎</span>
+      <span class="t-text">Донат</span>
+    </button>
   </nav>
 
   <!-- ВКЛАДКА 1: ЁЛКА -->
   <section id="tab-tree" class="tab-panel active">
-    <div id="treeWrap" class="tree-wrap">
+    <div id="treeWrap" class="tree-wrap glass-panel">
       <svg id="treeSvg" viewBox="0 0 400 500" preserveAspectRatio="xMidYMid meet">
-        <rect width="400" height="500" fill="#0f172a" rx="16"/>
+        <defs>
+          <!-- Небо внутри сцены -->
+          <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#050b1a"/>
+            <stop offset="55%" stop-color="#0d1b3a"/>
+            <stop offset="100%" stop-color="#172a4f"/>
+          </linearGradient>
+          <!-- Северное сияние в SVG -->
+          <linearGradient id="auroraGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#10b981" stop-opacity="0.0"/>
+            <stop offset="35%" stop-color="#10b981" stop-opacity="0.28"/>
+            <stop offset="70%" stop-color="#38bdf8" stop-opacity="0.22"/>
+            <stop offset="100%" stop-color="#a855f7" stop-opacity="0.0"/>
+          </linearGradient>
+          <!-- Градиенты хвои с объёмом -->
+          <linearGradient id="pineTop" x1="0.2" y1="0" x2="0.8" y2="1">
+            <stop offset="0%" stop-color="#22c55e"/>
+            <stop offset="45%" stop-color="#15803d"/>
+            <stop offset="100%" stop-color="#064e3b"/>
+          </linearGradient>
+          <linearGradient id="pineMid" x1="0.2" y1="0" x2="0.8" y2="1">
+            <stop offset="0%" stop-color="#16a34a"/>
+            <stop offset="50%" stop-color="#166534"/>
+            <stop offset="100%" stop-color="#052e16"/>
+          </linearGradient>
+          <linearGradient id="pineBot" x1="0.2" y1="0" x2="0.8" y2="1">
+            <stop offset="0%" stop-color="#15803d"/>
+            <stop offset="55%" stop-color="#14532d"/>
+            <stop offset="100%" stop-color="#042f1a"/>
+          </linearGradient>
+          <!-- Ствол с текстурой коры -->
+          <linearGradient id="trunkGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#451a03"/>
+            <stop offset="40%" stop-color="#78350f"/>
+            <stop offset="70%" stop-color="#92400e"/>
+            <stop offset="100%" stop-color="#3f1703"/>
+          </linearGradient>
+          <!-- Сугробы -->
+          <linearGradient id="snowDriftGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#ffffff"/>
+            <stop offset="55%" stop-color="#e2e8f0"/>
+            <stop offset="100%" stop-color="#94a3b8"/>
+          </linearGradient>
+          <!-- Свечение звезды и гирлянд -->
+          <filter id="glowFilter" x="-40%" y="-40%" width="180%" height="180%">
+            <feGaussianBlur stdDeviation="4" result="blur"/>
+            <feMerge>
+              <feMergeNode in="blur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+          <filter id="softShadow" x="-25%" y="-25%" width="150%" height="150%">
+            <feDropShadow dx="0" dy="4" stdDeviation="3" flood-color="#000000" flood-opacity="0.45"/>
+          </filter>
+          <!-- 3D градиенты для шаров -->
+          <radialGradient id="ball_red" cx="32%" cy="28%" r="68%">
+            <stop offset="0%" stop-color="#ffc2c7"/>
+            <stop offset="28%" stop-color="#f43f5e"/>
+            <stop offset="72%" stop-color="#be123c"/>
+            <stop offset="100%" stop-color="#4c0519"/>
+          </radialGradient>
+          <radialGradient id="ball_gold" cx="32%" cy="28%" r="68%">
+            <stop offset="0%" stop-color="#fef9c3"/>
+            <stop offset="30%" stop-color="#facc15"/>
+            <stop offset="75%" stop-color="#ca8a04"/>
+            <stop offset="100%" stop-color="#713f12"/>
+          </radialGradient>
+          <radialGradient id="ball_blue" cx="32%" cy="28%" r="68%">
+            <stop offset="0%" stop-color="#bae6fd"/>
+            <stop offset="30%" stop-color="#3b82f6"/>
+            <stop offset="75%" stop-color="#1d4ed8"/>
+            <stop offset="100%" stop-color="#172554"/>
+          </radialGradient>
+          <radialGradient id="ball_green" cx="32%" cy="28%" r="68%">
+            <stop offset="0%" stop-color="#bbf7d0"/>
+            <stop offset="30%" stop-color="#10b981"/>
+            <stop offset="75%" stop-color="#047857"/>
+            <stop offset="100%" stop-color="#022c22"/>
+          </radialGradient>
+          <radialGradient id="ball_pink" cx="32%" cy="28%" r="68%">
+            <stop offset="0%" stop-color="#fce7f3"/>
+            <stop offset="30%" stop-color="#ec4899"/>
+            <stop offset="75%" stop-color="#be185d"/>
+            <stop offset="100%" stop-color="#500724"/>
+          </radialGradient>
+          <radialGradient id="ball_silver" cx="32%" cy="28%" r="68%">
+            <stop offset="0%" stop-color="#ffffff"/>
+            <stop offset="35%" stop-color="#cbd5e1"/>
+            <stop offset="75%" stop-color="#64748b"/>
+            <stop offset="100%" stop-color="#1e293b"/>
+          </radialGradient>
+          <radialGradient id="ball_purple" cx="32%" cy="28%" r="68%">
+            <stop offset="0%" stop-color="#f3e8ff"/>
+            <stop offset="30%" stop-color="#a855f7"/>
+            <stop offset="75%" stop-color="#6b21a8"/>
+            <stop offset="100%" stop-color="#2e1065"/>
+          </radialGradient>
+        </defs>
+
+        <!-- Ночное небо -->
+        <rect width="400" height="500" fill="url(#skyGrad)" rx="18"/>
+        <!-- Волны северного сияния -->
+        <path class="aurora-wave" d="M -20,90 Q 110,20 220,85 T 420,60 L 420,190 Q 260,140 140,185 T -20,160 Z" fill="url(#auroraGrad)"/>
+        <!-- Полумесяц со свечением -->
+        <g filter="url(#glowFilter)" opacity="0.9">
+          <path d="M 335,45 A 22,22 0 1,0 358,74 A 18,18 0 1,1 335,45 Z" fill="#fef08a"/>
+        </g>
+        <!-- Снежинки и звёзды неба -->
         <g id="snow"></g>
-        <ellipse cx="120" cy="465" rx="140" ry="28" fill="#e2e8f0" opacity="0.9"/>
-        <ellipse cx="290" cy="470" rx="130" ry="25" fill="#f8fafc" opacity="0.95"/>
-        <rect x="185" y="410" width="30" height="48" fill="#654321" rx="4"/>
-        <polygon points="200,240 80,430 320,430" fill="#166534"/>
-        <polygon points="200,150 110,320 290,320" fill="#15803d"/>
-        <polygon points="200,60 130,210 270,210" fill="#166534"/>
-        <path d="M 145,180 Q 200,205 255,175" fill="none" stroke="#fde047" stroke-width="2" stroke-dasharray="4 6" opacity="0.7"/>
-        <path d="M 122,285 Q 200,315 278,280" fill="none" stroke="#fde047" stroke-width="2" stroke-dasharray="4 6" opacity="0.7"/>
-        <path d="M 96,390 Q 200,425 304,385" fill="none" stroke="#fde047" stroke-width="2" stroke-dasharray="4 6" opacity="0.7"/>
+
+        <!-- Задние сугробы -->
+        <ellipse cx="110" cy="462" rx="155" ry="34" fill="url(#snowDriftGrad)" opacity="0.88"/>
+        <ellipse cx="300" cy="466" rx="145" ry="30" fill="url(#snowDriftGrad)" opacity="0.95"/>
+
+        <!-- Тень под ёлкой -->
+        <ellipse cx="200" cy="458" rx="95" ry="14" fill="#020617" opacity="0.45"/>
+
+        <!-- Ствол ёлки -->
+        <rect x="182" y="405" width="36" height="54" fill="url(#trunkGrad)" rx="6"/>
+        <path d="M 190,410 L 190,455 M 204,412 L 204,455" stroke="#290f02" stroke-width="1.5" opacity="0.5"/>
+
+        <!-- НИЖНИЙ ЯРУС ЁЛКИ (пышная хвоя с волнистым краем) -->
+        <path filter="url(#softShadow)" fill="url(#pineBot)"
+          d="M 200,232
+             C 155,295 108,365 66,422
+             Q 98,438 132,424
+             Q 165,442 200,426
+             Q 235,442 268,424
+             Q 302,438 334,422
+             C 292,365 245,295 200,232 Z"/>
+        <!-- Снежная кромка нижнего яруса -->
+        <path d="M 72,421 Q 100,434 132,422 Q 165,437 200,424 Q 235,437 268,422 Q 300,434 328,421"
+          fill="none" stroke="#e2e8f0" stroke-width="4.5" stroke-linecap="round" opacity="0.75"/>
+
+        <!-- СРЕДНИЙ ЯРУС ЁЛКИ -->
+        <path filter="url(#softShadow)" fill="url(#pineMid)"
+          d="M 200,142
+             C 162,198 125,260 90,320
+             Q 118,334 146,321
+             Q 173,336 200,322
+             Q 227,336 254,321
+             Q 282,334 310,320
+             C 275,260 238,198 200,142 Z"/>
+        <path d="M 96,319 Q 120,330 146,319 Q 173,332 200,320 Q 227,332 254,319 Q 280,330 304,319"
+          fill="none" stroke="#f1f5f9" stroke-width="4" stroke-linecap="round" opacity="0.75"/>
+
+        <!-- ВЕРХНИЙ ЯРУС ЁЛКИ -->
+        <path filter="url(#softShadow)" fill="url(#pineTop)"
+          d="M 200,58
+             C 172,108 144,160 116,212
+             Q 138,223 158,213
+             Q 179,225 200,214
+             Q 221,225 242,213
+             Q 262,223 284,212
+             C 256,160 228,108 200,58 Z"/>
+        <path d="M 121,211 Q 140,220 158,211 Q 179,222 200,212 Q 221,222 242,211 Q 260,220 279,211"
+          fill="none" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" opacity="0.8"/>
+
+        <!-- Провода гирлянды -->
+        <path d="M 140,165 Q 200,198 260,160" fill="none" stroke="#1e293b" stroke-width="1.8" opacity="0.7"/>
+        <path d="M 114,272 Q 200,312 286,266" fill="none" stroke="#1e293b" stroke-width="1.8" opacity="0.7"/>
+        <path d="M 88,378 Q 200,422 312,370" fill="none" stroke="#1e293b" stroke-width="1.8" opacity="0.7"/>
+
+        <!-- Светящиеся лампочки гирлянды -->
+        <g id="garlandLights" filter="url(#glowFilter)"></g>
+
+        <!-- Звезда на макушке -->
         <g id="topStar"></g>
+
+        <!-- Игрушки игроков -->
         <g id="decorLayer"></g>
       </svg>
-      <div id="hint" class="hint">Выбери игрушку из инвентаря внизу и нажми на ёлку 👇</div>
+      <div id="hint" class="hint">Выбери игрушку из инвентаря и нажми прямо на ветки ёлки 👇</div>
     </div>
 
-    <div class="section-label">🎒 Твой инвентарь игрушек:</div>
+    <div class="section-label">🎒 Твой инвентарь (нажми, чтобы выбрать):</div>
     <div id="palette" class="palette"></div>
 
     <div class="actions-bar">
-      <button id="previewBtn" class="action-btn">🖼 Посмотреть итоговую открытку</button>
-    </div>
-
-    <div id="statsBox" class="stats-box">
-      <h3>🏆 Рейтинг украшения ёлки</h3>
-      <ul id="statsList"></ul>
+      <button id="previewBtn" class="action-btn glass-btn" type="button">🖼 Посмотреть итоговую открытку 1 января</button>
     </div>
   </section>
 
-  <!-- ВКЛАДКА 2: КЛИКЕР -->
+  <!-- ВКЛАДКА 2: ЛИДЕРБОРД (ОТДЕЛЬНАЯ ВКЛАДКА) -->
+  <section id="tab-leaderboard" class="tab-panel">
+    <div class="lb-header-card glass-panel">
+      <div class="lb-title-row">
+        <div>
+          <h2>🏆 Таблица лидеров</h2>
+          <p>Соревнуйся с друзьями и другими игроками до 1 января!</p>
+        </div>
+        <button id="refreshLbBtn" class="refresh-lb-btn" type="button" title="Обновить">🔄</button>
+      </div>
+      <div class="lb-subtabs">
+        <button class="lb-subtab active" data-lb="by_toys" type="button">🎄 Все игроки</button>
+        <button class="lb-subtab" data-lb="by_coins" type="button">🪙 Богачи</button>
+        <button class="lb-subtab" data-lb="chat_stats" type="button">💬 Эта ёлка</button>
+      </div>
+    </div>
+
+    <!-- Подиум Топ-3 -->
+    <div id="lbPodium" class="lb-podium"></div>
+
+    <!-- Полный список игроков -->
+    <div class="stats-box glass-panel">
+      <ul id="leaderboardList" class="lb-list"></ul>
+    </div>
+  </section>
+
+  <!-- ВКЛАДКА 3: КЛИКЕР -->
   <section id="tab-clicker" class="tab-panel">
-    <div class="clicker-card">
+    <div class="clicker-card glass-panel">
+      <div class="clicker-top-badges">
+        <span class="combo-pill" id="comboBadge">🔥 Комбо x1</span>
+      </div>
       <h2>🪙 Новогодний кликер</h2>
-      <p class="clicker-sub">Нажимай на шар, фарми монеты и покупай игрушки для ёлки!</p>
+      <p class="clicker-sub">Тапай по золотому шару, копи монеты и закупайся редкими игрушками!</p>
 
       <div class="clicker-stats-row">
         <div class="c-stat">
-          <span class="c-label">Баланс</span>
+          <span class="c-label">Твой баланс</span>
           <b id="clickerCoins">50 🪙</b>
         </div>
         <div class="c-stat">
-          <span class="c-label">За 1 клик</span>
+          <span class="c-label">Сила удара</span>
           <b id="clickPowerLabel">+1 🪙</b>
         </div>
       </div>
 
       <div class="clicker-stage" id="clickerStage">
+        <div class="clicker-glow"></div>
         <button id="bigClickBtn" class="big-click-btn" type="button">
+          <div class="orb-shine"></div>
           <span class="big-emoji">🎄</span>
-          <span class="big-ring"></span>
         </button>
       </div>
 
@@ -103,35 +308,35 @@
       </div>
 
       <button id="upgradeClickBtn" class="upgrade-btn" type="button">
-        ⚡ Улучшить силу клика (+1 🪙) — <span id="upgradeCost">100</span> 🪙
+        ⚡ Прокачать клик (+1 🪙 за тап) — <span id="upgradeCost">100</span> 🪙
       </button>
     </div>
   </section>
 
-  <!-- ВКЛАДКА 3: МАГАЗИН ЗА МОНЕТЫ -->
+  <!-- ВКЛАДКА 4: МАГАЗИН ЗА МОНЕТЫ -->
   <section id="tab-shop" class="tab-panel">
-    <div class="shop-header-card">
-      <h2>🛍 Магазин игрушек</h2>
-      <p>Покупай игрушки за нафармленные монеты 🪙 и вешай их на общую ёлку чата!</p>
+    <div class="shop-header-card glass-panel">
+      <h2>🛍 Магазин украшений</h2>
+      <p>Покупай игрушки за нафармленные монеты 🪙 и наряжай общую ёлку!</p>
     </div>
     <div id="shopGrid" class="shop-grid"></div>
   </section>
 
-  <!-- ВКЛАДКА 4: ДОНАТ-МАГАЗИН (STARS & GRAM) -->
+  <!-- ВКЛАДКА 5: ДОНАТ-МАГАЗИН (STARS & GRAM) -->
   <section id="tab-donate" class="tab-panel">
-    <div class="donate-header-card">
-      <h2>💎 Донат-магазин</h2>
-      <p>Поддержи проект и получи мешки монет или редкие наборы игрушек за <b>Telegram Stars ⭐️</b> или криптовалюту <b>GRAM 💎</b>!</p>
+    <div class="donate-header-card glass-panel">
+      <h2>💎 Премиум и Донат</h2>
+      <p>Мгновенные наборы монет и королевские комплекты игрушек за <b>Telegram Stars ⭐️</b> или криптовалюту <b>GRAM 💎</b></p>
     </div>
     <div id="donateList" class="donate-list"></div>
   </section>
 
   <!-- Модалка открытки -->
   <div id="previewModal" class="modal hidden">
-    <div class="modal-card">
+    <div class="modal-card glass-panel">
       <div class="modal-header">
         <span>🎄 Открытка для чата (1 января)</span>
-        <button id="closeModalBtn" class="close-btn">✕</button>
+        <button id="closeModalBtn" class="close-btn" type="button">✕</button>
       </div>
       <img id="previewImg" alt="Итоговая ёлка" />
     </div>
@@ -139,10 +344,10 @@
 
   <!-- Модалка оплаты GRAM -->
   <div id="gramModal" class="modal hidden">
-    <div class="modal-card">
+    <div class="modal-card glass-panel">
       <div class="modal-header">
         <span id="gramModalTitle">💎 Оплата в криптовалюте GRAM</span>
-        <button id="closeGramModalBtn" class="close-btn">✕</button>
+        <button id="closeGramModalBtn" class="close-btn" type="button">✕</button>
       </div>
       <div class="gram-body">
         <p id="gramPackDesc" class="gram-desc"></p>
@@ -168,6 +373,6 @@
 
   <div id="toast" class="toast"></div>
 </div>
-<script src="/static/app.js?v=3"></script>
+<script src="/static/app.js?v=5"></script>
 </body>
 </html>
