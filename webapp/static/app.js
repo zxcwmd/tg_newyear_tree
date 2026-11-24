@@ -5,14 +5,15 @@ if (tg) {
 }
 
 const params = new URLSearchParams(window.location.search);
-const urlChatId = params.get("chat_id") || params.get("startapp") || tg?.initDataUnsafe?.start_param || "";
-if (urlChatId) {
-  try { localStorage.setItem("ny_last_chat_id", String(urlChatId)); } catch (e) {}
+const rawUrlChat = params.get("chat_id") || params.get("startapp") || tg?.initDataUnsafe?.start_param || "";
+// Групповые чаты имеют отрицательный ID (< 0). Одиночные положительные ID (> 1) объединяем в общую ёлку "1"
+function normalizeChatId(val) {
+  const n = Number(val);
+  if (!Number.isNaN(n) && n < 0) return String(n);
+  return "1";
 }
-const savedChatId = (() => {
-  try { return localStorage.getItem("ny_last_chat_id") || ""; } catch (e) { return ""; }
-})();
-const chatId = urlChatId || savedChatId || String(tg?.initDataUnsafe?.chat?.id || tg?.initDataUnsafe?.user?.id || "1");
+
+const chatId = normalizeChatId(rawUrlChat);
 const initData = tg?.initData || "";
 
 function getPersistentUser() {
@@ -40,7 +41,7 @@ function getPersistentUser() {
 }
 
 const currentUser = getPersistentUser();
-const BACKUP_KEY = `ny_backup_v3_${chatId}_${currentUser.id}`;
+const BACKUP_KEY = `ny_backup_v5_${chatId}_${currentUser.id}`;
 
 let state = {
   ornaments: {},
@@ -50,6 +51,8 @@ let state = {
   selectedColor: "red",
   decorations: [],
   stats: [],
+  leaderboard: { by_toys: [], by_coins: [] },
+  activeLbTab: "by_toys",
   myUserId: currentUser.id,
   coins: 50,
   clickPower: 1,
@@ -57,6 +60,8 @@ let state = {
   energy: 500,
   maxEnergy: 500,
   pendingClicks: 0,
+  combo: 1,
+  lastClickAt: 0,
   activeGramPack: null,
 };
 
@@ -82,13 +87,181 @@ function haptic(type = "light") {
   try { tg?.HapticFeedback?.impactOccurred(type); } catch (e) {}
 }
 
-// --- Локальный и облачный бэкап прогресса ---
+// ============================================================================
+// 1. ЖИВОЙ ФОН (#bgCanvas) И СИСТЕМА ЧАСТИЦ (#fxCanvas)
+// ============================================================================
+const bgCanvas = $("#bgCanvas");
+const bgCtx = bgCanvas.getContext("2d");
+const fxCanvas = $("#fxCanvas");
+const fxCtx = fxCanvas.getContext("2d");
+
+let bgW = window.innerWidth;
+let bgH = window.innerHeight;
+const bgSnow = [];
+const fxParticles = [];
+
+function resizeCanvases() {
+  bgW = window.innerWidth;
+  bgH = window.innerHeight;
+  bgCanvas.width = bgW;
+  bgCanvas.height = bgH;
+  fxCanvas.width = bgW;
+  fxCanvas.height = bgH;
+}
+window.addEventListener("resize", resizeCanvases);
+resizeCanvases();
+
+for (let i = 0; i < 65; i++) {
+  bgSnow.push({
+    x: Math.random() * bgW,
+    y: Math.random() * bgH,
+    r: Math.random() * 2.4 + 0.7,
+    vy: Math.random() * 0.65 + 0.25,
+    vx: (Math.random() - 0.5) * 0.35,
+    phase: Math.random() * Math.PI * 2,
+    alpha: Math.random() * 0.55 + 0.25,
+  });
+}
+
+function spawnParticles(clientX, clientY, color = "#fde047", count = 18) {
+  const paletteColors = [color, "#fde047", "#38bdf8", "#ffffff", "#f43f5e", "#34d399"];
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 5.2 + 1.4;
+    fxParticles.push({
+      x: clientX,
+      y: clientY,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 1.5,
+      size: Math.random() * 4.5 + 2.2,
+      color: paletteColors[i % paletteColors.length],
+      alpha: 1,
+      decay: Math.random() * 0.024 + 0.018,
+      star: i % 3 === 0,
+    });
+  }
+}
+
+let animTick = 0;
+function animateCanvases() {
+  animTick += 0.015;
+  bgCtx.clearRect(0, 0, bgW, bgH);
+
+  // Мягкое северное сияние в фоне
+  const grad1 = bgCtx.createRadialGradient(
+    bgW * (0.3 + 0.15 * Math.sin(animTick)),
+    bgH * 0.18,
+    10,
+    bgW * 0.5,
+    bgH * 0.25,
+    bgW * 0.85
+  );
+  grad1.addColorStop(0, "rgba(16, 185, 129, 0.16)");
+  grad1.addColorStop(0.5, "rgba(14, 165, 233, 0.10)");
+  grad1.addColorStop(1, "rgba(4, 9, 20, 0)");
+  bgCtx.fillStyle = grad1;
+  bgCtx.fillRect(0, 0, bgW, bgH);
+
+  // Падающий снег с глубиной
+  for (const s of bgSnow) {
+    s.y += s.vy;
+    s.x += s.vx + Math.sin(animTick + s.phase) * 0.25;
+    if (s.y > bgH + 6) {
+      s.y = -6;
+      s.x = Math.random() * bgW;
+    }
+    if (s.x > bgW + 6) s.x = -6;
+    if (s.x < -6) s.x = bgW + 6;
+
+    bgCtx.beginPath();
+    bgCtx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    bgCtx.fillStyle = `rgba(255, 255, 255, ${s.alpha})`;
+    bgCtx.fill();
+  }
+
+  // Частицы спецэффектов
+  fxCtx.clearRect(0, 0, bgW, bgH);
+  for (let i = fxParticles.length - 1; i >= 0; i--) {
+    const p = fxParticles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.14; // гравитация
+    p.alpha -= p.decay;
+    if (p.alpha <= 0) {
+      fxParticles.splice(i, 1);
+      continue;
+    }
+    fxCtx.save();
+    fxCtx.globalAlpha = Math.max(0, p.alpha);
+    fxCtx.fillStyle = p.color;
+    fxCtx.shadowColor = p.color;
+    fxCtx.shadowBlur = 8;
+    if (p.star) {
+      fxCtx.translate(p.x, p.y);
+      fxCtx.rotate(p.alpha * 4);
+      fxCtx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+    } else {
+      fxCtx.beginPath();
+      fxCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      fxCtx.fill();
+    }
+    fxCtx.restore();
+  }
+
+  requestAnimationFrame(animateCanvases);
+}
+requestAnimationFrame(animateCanvases);
+
+// ============================================================================
+// 2. ПРОВЕРКА ГРАНИЦ ЁЛКИ (ЗАПРЕТ ВЕШАТЬ МИМО ВЕТОК)
+// ============================================================================
+const TREE_TIERS = [
+  [64.0, 215.0, 8.0, 74.0],
+  [150.0, 325.0, 14.0, 94.0],
+  [240.0, 428.0, 18.0, 118.0],
+];
+
+function isPointInsideTree(xPct, yPct) {
+  const sx = xPct * 4.0;
+  const sy = yPct * 5.0;
+  for (const [yTop, yBot, hwTop, hwBot] of TREE_TIERS) {
+    if (sy >= yTop && sy <= yBot) {
+      const t = (sy - yTop) / (yBot - yTop);
+      const maxHw = hwTop + t * (hwBot - hwTop);
+      if (Math.abs(sx - 200.0) <= maxHw) return true;
+    }
+  }
+  return false;
+}
+
+function clampToTree(xPct, yPct) {
+  const sx = xPct * 4.0;
+  const sy = Math.max(68.0, Math.min(424.0, yPct * 5.0));
+  let allowedHw = 20.0;
+  for (const [yTop, yBot, hwTop, hwBot] of TREE_TIERS) {
+    if (sy >= yTop && sy <= yBot) {
+      const t = (sy - yTop) / (yBot - yTop);
+      const hw = hwTop + t * (hwBot - hwTop) - 3.0;
+      if (hw > allowedHw) allowedHw = hw;
+    }
+  }
+  const clampedSx = Math.max(200.0 - allowedHw, Math.min(200.0 + allowedHw, sx));
+  return {
+    x: Math.round((clampedSx / 4.0) * 10) / 10,
+    y: Math.round((sy / 5.0) * 10) / 10,
+  };
+}
+
+// ============================================================================
+// 3. ЛОКАЛЬНЫЙ И ОБЛАЧНЫЙ БЭКАП ПРОГРЕССА
+// ============================================================================
 function saveBackup() {
+  const myDecs = state.decorations.filter((d) => d.user_id === state.myUserId);
   const payload = {
     coins: state.coins,
     click_power: state.clickPower,
     inventory: state.inventory,
-    decorations: state.decorations,
+    decorations: myDecs,
     ts: Date.now(),
   };
   const jsonStr = JSON.stringify(payload);
@@ -110,11 +283,16 @@ function loadLocalBackup() {
   return null;
 }
 
-// --- Переключение вкладок ---
+// ============================================================================
+// 4. НАВИГАЦИЯ ПО ВКЛАДКАМ
+// ============================================================================
 function switchTab(tabName) {
   $$(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === tabName));
   $$(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === `tab-${tabName}`));
   haptic("light");
+  if (tabName === "leaderboard") {
+    fetchLeaderboardOnly();
+  }
 }
 
 $$(".tab-btn").forEach((btn) => {
@@ -122,6 +300,35 @@ $$(".tab-btn").forEach((btn) => {
 });
 
 $("#balancePill").addEventListener("click", () => switchTab("clicker"));
+
+$$(".lb-subtab").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    state.activeLbTab = btn.dataset.lb;
+    $$(".lb-subtab").forEach((b) => b.classList.toggle("active", b.dataset.lb === state.activeLbTab));
+    haptic("light");
+    renderLeaderboard();
+  });
+});
+
+$("#refreshLbBtn").addEventListener("click", async () => {
+  haptic("light");
+  await fetchLeaderboardOnly(true);
+});
+
+async function fetchLeaderboardOnly(showToast = false) {
+  try {
+    const res = await fetch(`/api/leaderboard?chat_id=${chatId}&t=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    state.stats = data.chat_stats || state.stats;
+    state.leaderboard = {
+      by_toys: data.by_toys || [],
+      by_coins: data.by_coins || [],
+    };
+    renderLeaderboard();
+    if (showToast) toast("Рейтинг обновлён 🏆");
+  } catch (e) {}
+}
 
 function updateCountdown() {
   const now = new Date();
@@ -163,80 +370,175 @@ function updateHeaderAndClickerUI() {
   $("#energyText").textContent = `${state.energy} / ${state.maxEnergy}`;
   const pct = Math.max(0, Math.min(100, (state.energy / state.maxEnergy) * 100));
   $("#energyBarFill").style.width = `${pct}%`;
+  const totalPlayers = Math.max(1, state.leaderboard?.by_toys?.length || state.stats?.length || 1);
+  $("#playersCountChip").textContent = `👥 Игроков: ${totalPlayers}`;
 }
 
-// --- SVG helpers ---
+// ============================================================================
+// 5. ТЕКСТУРИРОВАННАЯ 3D ОТРИСОВКА ЁЛКИ, ГИРЛЯНДЫ И ИГРУШЕК
+// ============================================================================
 function svgEl(tag, attrs = {}) {
   const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
   for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
   return el;
 }
 
-function drawSnow() {
+function drawSnowAndStars() {
   const g = $("#snow");
   g.innerHTML = "";
-  for (let i = 0; i < 40; i++) {
-    const x = Math.random() * 400, y = Math.random() * 500;
-    const r = Math.random() * 2 + 0.8;
-    g.appendChild(svgEl("circle", { cx: x, cy: y, r, fill: "#fff", opacity: 0.4 + Math.random() * 0.5 }));
+  for (let i = 0; i < 36; i++) {
+    const x = Math.random() * 400;
+    const y = Math.random() * 440;
+    const r = Math.random() * 1.8 + 0.6;
+    g.appendChild(svgEl("circle", {
+      cx: x,
+      cy: y,
+      r,
+      fill: i % 5 === 0 ? "#fef08a" : "#ffffff",
+      opacity: 0.35 + Math.random() * 0.55,
+    }));
+  }
+}
+
+function drawGarlandLights() {
+  const g = $("#garlandLights");
+  g.innerHTML = "";
+  const colors = ["#fde047", "#f43f5e", "#38bdf8", "#34d399", "#c084fc"];
+  const wires = [
+    { x1: 140, y1: 165, cx: 200, cy: 198, x2: 260, y2: 160, count: 5 },
+    { x1: 114, y1: 272, cx: 200, cy: 312, x2: 286, y2: 266, count: 6 },
+    { x1: 88, y1: 378, cx: 200, cy: 422, x2: 312, y2: 370, count: 7 },
+  ];
+  let idx = 0;
+  for (const w of wires) {
+    for (let i = 0; i < w.count; i++) {
+      const t = (i + 0.5) / w.count;
+      const x = (1 - t) * (1 - t) * w.x1 + 2 * (1 - t) * t * w.cx + t * t * w.x2;
+      const y = (1 - t) * (1 - t) * w.y1 + 2 * (1 - t) * t * w.cy + t * t * w.y2;
+      const col = colors[idx % colors.length];
+      const bulb = svgEl("circle", {
+        cx: x,
+        cy: y + 2,
+        r: 4,
+        fill: col,
+        class: "garland-bulb",
+        style: `animation-delay: ${(idx * 0.23).toFixed(2)}s`,
+      });
+      g.appendChild(bulb);
+      idx++;
+    }
   }
 }
 
 function drawTopStar() {
   const g = $("#topStar");
   g.innerHTML = "";
-  g.appendChild(starShape(200, 45, 22, "#ffd60a"));
+  // Сияющий ореол вокруг макушки
+  g.appendChild(svgEl("circle", { cx: 200, cy: 48, r: 28, fill: "#fde047", opacity: 0.22, filter: "url(#glowFilter)" }));
+  g.appendChild(starShape(200, 48, 24, "#fde047", "#ca8a04"));
+  g.appendChild(starShape(200, 48, 12, "#fef9c3", "none"));
 }
 
-function starShape(cx, cy, r, color) {
+function starShape(cx, cy, r, fillColor, strokeColor = "#b45309") {
   let pts = "";
   for (let i = 0; i < 10; i++) {
     const a = -Math.PI / 2 + i * Math.PI / 5;
-    const rad = i % 2 === 0 ? r : r * 0.45;
+    const rad = i % 2 === 0 ? r : r * 0.44;
     pts += `${cx + rad * Math.cos(a)},${cy + rad * Math.sin(a)} `;
   }
-  return svgEl("polygon", { points: pts, fill: color, stroke: "#b45309", "stroke-width": 1 });
+  return svgEl("polygon", {
+    points: pts,
+    fill: fillColor,
+    stroke: strokeColor,
+    "stroke-width": strokeColor === "none" ? 0 : 1.2,
+  });
 }
 
-function ornamentShape(type, color, x, y) {
-  const g = svgEl("g", { class: "dec-item" });
+function ornamentShape(type, colorName, colorHex, x, y) {
+  const g = svgEl("g", { class: "dec-item", filter: "url(#softShadow)" });
   g.setAttribute("transform", `translate(${x},${y})`);
+
   if (type === "ball") {
-    g.appendChild(svgEl("rect", { x: -3, y: -16, width: 6, height: 6, fill: "#cbd5e1" }));
-    g.appendChild(svgEl("circle", { cx: 0, cy: 0, r: 12, fill: color, stroke: "rgba(0,0,0,.4)" }));
-    g.appendChild(svgEl("ellipse", { cx: -4, cy: -5, rx: 4, ry: 3, fill: "#fff", opacity: 0.7 }));
+    const gradId = `ball_${colorName}`;
+    const fillVal = document.getElementById(gradId) ? `url(#${gradId})` : colorHex;
+    // Золотая петелька и коронка
+    g.appendChild(svgEl("circle", { cx: 0, cy: -16, r: 3, fill: "none", stroke: "#facc15", "stroke-width": 1.3 }));
+    g.appendChild(svgEl("rect", { x: -3.5, y: -14.5, width: 7, height: 4.5, rx: 1.2, fill: "#eab308", stroke: "#713f12", "stroke-width": 0.6 }));
+    // 3D сфера шара
+    g.appendChild(svgEl("circle", { cx: 0, cy: 0, r: 12.5, fill: fillVal, stroke: "rgba(255,255,255,0.22)", "stroke-width": 0.7 }));
+    // Блик стекла
+    g.appendChild(svgEl("ellipse", { cx: -4.2, cy: -4.8, rx: 3.8, ry: 2.2, fill: "#ffffff", opacity: 0.75, transform: "rotate(-25 -4.2 -4.8)" }));
+    g.appendChild(svgEl("circle", { cx: -1.5, cy: -1.5, r: 1.1, fill: "#ffffff", opacity: 0.55 }));
   } else if (type === "star") {
-    g.appendChild(starShape(0, 0, 14, color));
+    g.appendChild(starShape(0, 0, 15.5, colorHex, "#92400e"));
+    g.appendChild(starShape(0, 0, 8, "#ffffff", "none"));
   } else if (type === "snowflake") {
+    g.appendChild(svgEl("circle", { cx: 0, cy: 0, r: 13, fill: colorHex, opacity: 0.16 }));
     for (let a = 0; a < 360; a += 60) {
-      const rad = a * Math.PI / 180;
+      const rad = (a * Math.PI) / 180;
+      const x2 = 12.5 * Math.cos(rad);
+      const y2 = 12.5 * Math.sin(rad);
       g.appendChild(svgEl("line", {
-        x1: 0, y1: 0, x2: 11 * Math.cos(rad), y2: 11 * Math.sin(rad),
-        stroke: color, "stroke-width": 2.5, "stroke-linecap": "round"
+        x1: 0, y1: 0, x2, y2,
+        stroke: colorHex, "stroke-width": 2.3, "stroke-linecap": "round",
       }));
+      const bx = 7.5 * Math.cos(rad);
+      const by = 7.5 * Math.sin(rad);
+      for (const da of [-35, 35]) {
+        const r2 = rad + (da * Math.PI) / 180;
+        g.appendChild(svgEl("line", {
+          x1: bx, y1: by,
+          x2: bx + 4.2 * Math.cos(r2),
+          y2: by + 4.2 * Math.sin(r2),
+          stroke: colorHex, "stroke-width": 1.6, "stroke-linecap": "round",
+        }));
+      }
     }
-    g.appendChild(svgEl("circle", { cx: 0, cy: 0, r: 2.5, fill: color }));
+    g.appendChild(svgEl("circle", { cx: 0, cy: 0, r: 3, fill: "#ffffff" }));
   } else if (type === "gift") {
-    g.appendChild(svgEl("rect", { x: -11, y: -7, width: 22, height: 18, fill: color, stroke: "rgba(0,0,0,.4)", rx: 2 }));
-    g.appendChild(svgEl("rect", { x: -11, y: -11, width: 22, height: 6, fill: color, stroke: "rgba(0,0,0,.4)", rx: 2 }));
-    g.appendChild(svgEl("rect", { x: -2, y: -11, width: 4, height: 22, fill: "#ffd60a" }));
+    const gradId = `ball_${colorName}`;
+    const fillVal = document.getElementById(gradId) ? `url(#${gradId})` : colorHex;
+    // Коробка
+    g.appendChild(svgEl("rect", { x: -11, y: -6, width: 22, height: 17, rx: 2.5, fill: fillVal, stroke: "rgba(0,0,0,0.45)" }));
+    // Крышка
+    g.appendChild(svgEl("rect", { x: -12.5, y: -10.5, width: 25, height: 6, rx: 2, fill: fillVal, stroke: "rgba(0,0,0,0.45)" }));
+    // Золотые ленты и пышный бант
+    g.appendChild(svgEl("rect", { x: -2.2, y: -10.5, width: 4.4, height: 21.5, fill: "#fde047" }));
+    g.appendChild(svgEl("rect", { x: -11, y: 0, width: 22, height: 3.6, fill: "#fde047" }));
+    g.appendChild(svgEl("ellipse", { cx: -4.5, cy: -12.5, rx: 4.5, ry: 2.6, fill: "none", stroke: "#fde047", "stroke-width": 2.2, transform: "rotate(-20 -4.5 -12.5)" }));
+    g.appendChild(svgEl("ellipse", { cx: 4.5, cy: -12.5, rx: 4.5, ry: 2.6, fill: "none", stroke: "#fde047", "stroke-width": 2.2, transform: "rotate(20 4.5 -12.5)" }));
   } else if (type === "bell") {
-    g.appendChild(svgEl("path", { d: "M -10 6 A 10 10 0 0 1 10 6 Z", fill: color, stroke: "rgba(0,0,0,.4)" }));
-    g.appendChild(svgEl("rect", { x: -10, y: 5, width: 20, height: 4, fill: color }));
-    g.appendChild(svgEl("circle", { cx: 0, cy: 10, r: 3, fill: "#92400e" }));
+    // Бантик сверху
+    g.appendChild(svgEl("circle", { cx: -4, cy: -11, r: 3, fill: "#ef4444" }));
+    g.appendChild(svgEl("circle", { cx: 4, cy: -11, r: 3, fill: "#ef4444" }));
+    // Купол колокольчика
+    g.appendChild(svgEl("path", {
+      d: "M -11,7 Q -10,-10 0,-10 Q 10,-10 11,7 Z",
+      fill: "url(#ball_gold)",
+      stroke: "#92400e",
+      "stroke-width": 1,
+    }));
+    g.appendChild(svgEl("rect", { x: -12, y: 5.5, width: 24, height: 3.5, rx: 1.5, fill: "#fde047", stroke: "#92400e", "stroke-width": 0.8 }));
+    g.appendChild(svgEl("circle", { cx: 0, cy: 10.5, r: 3.2, fill: "#b45309" }));
+    g.appendChild(svgEl("ellipse", { cx: -3.5, cy: -2, rx: 2, ry: 4.5, fill: "#fef9c3", opacity: 0.65 }));
   } else if (type === "candy") {
-    g.appendChild(svgEl("polygon", { points: "-8,0 -16,-6 -16,6", fill: color }));
-    g.appendChild(svgEl("polygon", { points: "8,0 16,-6 16,6", fill: color }));
-    g.appendChild(svgEl("circle", { cx: 0, cy: 0, r: 8, fill: color, stroke: "rgba(0,0,0,.4)" }));
-    g.appendChild(svgEl("line", { x1: -4, y1: -5, x2: 4, y2: 5, stroke: "#fff", "stroke-width": 2 }));
+    const gradId = `ball_${colorName}`;
+    const fillVal = document.getElementById(gradId) ? `url(#${gradId})` : colorHex;
+    // Хвостики фантика
+    g.appendChild(svgEl("polygon", { points: "-8,0 -17,-7 -15,0 -17,7", fill: fillVal, stroke: "rgba(0,0,0,0.35)" }));
+    g.appendChild(svgEl("polygon", { points: "8,0 17,-7 15,0 17,7", fill: fillVal, stroke: "rgba(0,0,0,0.35)" }));
+    // Конфета со спиральными полосками
+    g.appendChild(svgEl("circle", { cx: 0, cy: 0, r: 9.5, fill: fillVal, stroke: "rgba(255,255,255,0.35)", "stroke-width": 0.8 }));
+    g.appendChild(svgEl("path", { d: "M -6,-5 Q 0,0 6,5 M -6,5 Q 0,0 6,-5", stroke: "#ffffff", "stroke-width": 2.2, "stroke-linecap": "round", opacity: 0.85 }));
+    g.appendChild(svgEl("circle", { cx: -3, cy: -3.5, r: 2.2, fill: "#ffffff", opacity: 0.65 }));
   }
   return g;
 }
 
 function clientToPercent(clientX, clientY) {
   const rect = treeSvg.getBoundingClientRect();
-  const x = Math.max(4, Math.min(96, (clientX - rect.left) / rect.width * 100));
-  const y = Math.max(6, Math.min(92, (clientY - rect.top) / rect.height * 100));
+  const x = ((clientX - rect.left) / rect.width) * 100;
+  const y = ((clientY - rect.top) / rect.height) * 100;
   return {
     x: Math.round(x * 10) / 10,
     y: Math.round(y * 10) / 10,
@@ -247,15 +549,16 @@ function renderDecorations() {
   decorLayer.innerHTML = "";
   for (const d of state.decorations) {
     const colorHex = state.ornaments[d.ornament_type]?.colors?.[d.color] || "#e63946";
-    const x = d.x / 100 * 400;
-    const y = d.y / 100 * 500;
-    const el = ornamentShape(d.ornament_type, colorHex, x, y);
+    const x = (d.x / 100) * 400;
+    const y = (d.y / 100) * 500;
+    const el = ornamentShape(d.ornament_type, d.color, colorHex, x, y);
     el.dataset.id = d.id;
 
     el.addEventListener("pointerdown", (e) => {
       e.stopPropagation();
       if (state.myUserId && d.user_id !== state.myUserId) {
-        toast("Это игрушка другого участника 🙂");
+        const owner = d.username ? `@${d.username}` : (d.first_name || "Другой игрок");
+        toast(`🎄 Эту игрушку повесил(а): ${owner}`);
         return;
       }
       el.setPointerCapture(e.pointerId);
@@ -275,10 +578,11 @@ function renderDecorations() {
       const dist = Math.hypot(e.clientX - dragState.startX, e.clientY - dragState.startY);
       if (dist > 6) dragState.moved = true;
       if (dragState.moved) {
-        const pt = clientToPercent(e.clientX, e.clientY);
-        dragState.curX = pt.x;
-        dragState.curY = pt.y;
-        el.setAttribute("transform", `translate(${pt.x / 100 * 400},${pt.y / 100 * 500})`);
+        const rawPt = clientToPercent(e.clientX, e.clientY);
+        const clamped = clampToTree(rawPt.x, rawPt.y);
+        dragState.curX = clamped.x;
+        dragState.curY = clamped.y;
+        el.setAttribute("transform", `translate(${(clamped.x / 100) * 400},${(clamped.y / 100) * 500})`);
       }
     });
 
@@ -286,10 +590,11 @@ function renderDecorations() {
       if (!dragState || dragState.dec.id !== d.id) return;
       e.stopPropagation();
       suppressNextTreeClick = true;
-      setTimeout(() => { suppressNextTreeClick = false; }, 100);
+      setTimeout(() => { suppressNextTreeClick = false; }, 120);
       const finishedDrag = dragState;
       dragState = null;
       if (finishedDrag.moved) {
+        spawnParticles(e.clientX, e.clientY, colorHex, 14);
         await saveMoveDecoration(d.id, finishedDrag.curX, finishedDrag.curY);
       } else {
         await onDecorationClick(d);
@@ -298,7 +603,7 @@ function renderDecorations() {
 
     decorLayer.appendChild(el);
   }
-  $("#counter").textContent = `На ёлке: ${state.decorations.length}`;
+  $("#counter").textContent = `✨ На ёлке: ${state.decorations.length}`;
 }
 
 async function saveMoveDecoration(decorationId, x, y) {
@@ -324,19 +629,99 @@ async function saveMoveDecoration(decorationId, x, y) {
   }
 }
 
-function renderStats() {
-  const ul = $("#statsList");
-  ul.innerHTML = "";
-  if (!state.stats.length) {
-    ul.innerHTML = "<li><span>Пока никто не украшал</span><span>—</span></li>";
+// ============================================================================
+// 6. ОТДЕЛЬНАЯ ВКЛАДКА ЛИДЕРБОРДА (ПОДИУМ ТОП-3 + ПОЛНЫЙ СПИСОК ИГРОКОВ)
+// ============================================================================
+function getDisplayName(row) {
+  if (row.username) return `@${row.username}`;
+  return row.first_name || `Игрок #${row.user_id}`;
+}
+
+function getInitials(row) {
+  const name = (row.first_name || row.username || "И").trim();
+  return name.slice(0, 1).toUpperCase();
+}
+
+function renderLeaderboard() {
+  const podiumEl = $("#lbPodium");
+  const listEl = $("#leaderboardList");
+  if (!podiumEl || !listEl) return;
+
+  let rows = [];
+  const mode = state.activeLbTab;
+  if (mode === "by_coins") {
+    rows = state.leaderboard?.by_coins || [];
+  } else if (mode === "chat_stats") {
+    rows = state.stats || [];
+  } else {
+    rows = state.leaderboard?.by_toys || [];
+  }
+
+  podiumEl.innerHTML = "";
+  listEl.innerHTML = "";
+
+  if (!rows.length) {
+    listEl.innerHTML = `<li class="lb-row"><span>Пока нет участников</span><span>—</span></li>`;
     return;
   }
-  state.stats.forEach((s, i) => {
-    const name = s.username ? `@${s.username}` : (s.first_name || "Участник");
-    const medal = ["🥇", "🥈", "🥉"][i] || `${i + 1}.`;
+
+  // Подиум Топ-3 (порядок отображения: 2 место слева, 1 место в центре, 3 место справа)
+  const top3Order = [rows[1], rows[0], rows[2]];
+  const ranks = [2, 1, 3];
+  const medals = { 1: "🥇", 2: "🥈", 3: "🥉" };
+
+  top3Order.forEach((item, idx) => {
+    const r = ranks[idx];
+    const card = document.createElement("div");
+    card.className = `podium-card rank-${r}`;
+    if (!item) {
+      card.innerHTML = `
+        <div class="podium-medal">${medals[r]}</div>
+        <div class="podium-avatar">—</div>
+        <div class="podium-name">Свободно</div>
+        <div class="podium-score">0</div>
+      `;
+    } else {
+      const scoreText = mode === "by_coins"
+        ? `${item.coins ?? 0} 🪙`
+        : `${item.count ?? 0} 🎄`;
+      card.innerHTML = `
+        <div class="podium-medal">${medals[r]}</div>
+        <div class="podium-avatar">${escapeHtml(getInitials(item))}</div>
+        <div class="podium-name">${escapeHtml(getDisplayName(item))}</div>
+        <div class="podium-score">${scoreText}</div>
+      `;
+    }
+    podiumEl.appendChild(card);
+  });
+
+  // Полный список всех игроков
+  rows.forEach((row, idx) => {
+    const isMe = Number(row.user_id) === Number(state.myUserId);
     const li = document.createElement("li");
-    li.innerHTML = `<span>${medal} ${escapeHtml(name)}</span><b>${s.count} шт.</b>`;
-    ul.appendChild(li);
+    li.className = "lb-row" + (isMe ? " is-me" : "");
+    const medal = ["🥇", "🥈", "🥉"][idx] || `${idx + 1}.`;
+    const mainMetric = mode === "by_coins"
+      ? `${row.coins ?? 0} 🪙`
+      : `${row.count ?? 0} 🎄`;
+    const subMetric = mode === "by_coins"
+      ? `Наряжено игрушек: ${row.count ?? 0} 🎄`
+      : `Баланс: ${row.coins ?? 0} 🪙`;
+
+    li.innerHTML = `
+      <div class="lb-left">
+        <span class="lb-rank">${medal}</span>
+        <div class="lb-avatar">${escapeHtml(getInitials(row))}</div>
+        <div class="lb-user-meta">
+          <div class="lb-uname">${escapeHtml(getDisplayName(row))} ${isMe ? "<b>(Вы)</b>" : ""}</div>
+          <div class="lb-sub">${subMetric}</div>
+        </div>
+      </div>
+      <div class="lb-right">
+        <div class="lb-main-val">${mainMetric}</div>
+      </div>
+    `;
+    listEl.appendChild(li);
   });
 }
 
@@ -346,6 +731,9 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+// ============================================================================
+// 7. ИНВЕНТАРЬ, МАГАЗИН И ДОНАТ
+// ============================================================================
 function renderPalette() {
   palette.innerHTML = "";
   for (const [type, info] of Object.entries(state.ornaments)) {
@@ -403,7 +791,9 @@ function renderShop() {
         Купить за ${info.price} 🪙
       </button>
     `;
-    card.querySelector(".buy-coin-btn").addEventListener("click", () => buyOrnamentWithCoins(type));
+    card.querySelector(".buy-coin-btn").addEventListener("click", (ev) => {
+      buyOrnamentWithCoins(type, ev.clientX, ev.clientY);
+    });
     grid.appendChild(card);
   }
 }
@@ -438,7 +828,7 @@ function renderDonateShop() {
   }
 }
 
-async function buyOrnamentWithCoins(ornamentType) {
+async function buyOrnamentWithCoins(ornamentType, clientX, clientY) {
   await flushPendingClicks();
   try {
     const res = await fetch("/api/buy", {
@@ -454,6 +844,7 @@ async function buyOrnamentWithCoins(ornamentType) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Не удалось купить");
     haptic("medium");
+    if (clientX && clientY) spawnParticles(clientX, clientY, "#22c55e", 20);
     applyProfile(data.profile);
     state.selectedType = ornamentType;
     state.selectedColor = Object.keys(state.ornaments[ornamentType].colors)[0];
@@ -464,7 +855,6 @@ async function buyOrnamentWithCoins(ornamentType) {
   }
 }
 
-// --- Донат: Telegram Stars и GRAM ---
 async function buyWithStars(packId) {
   try {
     const res = await fetch("/api/donate/stars-invoice", {
@@ -529,6 +919,7 @@ async function claimDonateReward(packId, currency, orderId = 0) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Ошибка начисления");
     haptic("heavy");
+    spawnParticles(window.innerWidth / 2, window.innerHeight / 2, "#fde047", 32);
     applyProfile(data.profile);
     $("#gramModal").classList.add("hidden");
     toast(data.message || "Набор получен! 🎉");
@@ -551,7 +942,9 @@ $("#closeGramModalBtn").addEventListener("click", () => {
   $("#gramModal").classList.add("hidden");
 });
 
-// --- Кликер ---
+// ============================================================================
+// 8. КЛИКЕР С КОМБО И ЧАСТИЦАМИ
+// ============================================================================
 const bigClickBtn = $("#bigClickBtn");
 const clickerStage = $("#clickerStage");
 
@@ -561,6 +954,15 @@ bigClickBtn.addEventListener("pointerdown", (e) => {
     toast("Энергия закончилась! Подожди пару секунд ⚡", true);
     return;
   }
+  const now = Date.now();
+  if (now - state.lastClickAt < 700) {
+    state.combo = Math.min(5, state.combo + 1);
+  } else {
+    state.combo = 1;
+  }
+  state.lastClickAt = now;
+  $("#comboBadge").textContent = `🔥 Комбо x${state.combo}`;
+
   state.energy = Math.max(0, state.energy - 1);
   state.coins += state.clickPower;
   state.pendingClicks += 1;
@@ -568,10 +970,13 @@ bigClickBtn.addEventListener("pointerdown", (e) => {
   updateHeaderAndClickerUI();
   saveBackup();
 
-  // Анимация +X 🪙
   const rect = clickerStage.getBoundingClientRect();
-  const fx = (e.clientX ? e.clientX - rect.left : rect.width / 2) + (Math.random() * 30 - 15);
-  const fy = (e.clientY ? e.clientY - rect.top : rect.height / 2) - 10;
+  const cx = e.clientX || rect.left + rect.width / 2;
+  const cy = e.clientY || rect.top + rect.height / 2;
+  spawnParticles(cx, cy, "#fde047", 10);
+
+  const fx = (e.clientX ? e.clientX - rect.left : rect.width / 2) + (Math.random() * 34 - 17);
+  const fy = (e.clientY ? e.clientY - rect.top : rect.height / 2) - 12;
   const plus = document.createElement("div");
   plus.className = "float-plus";
   plus.textContent = `+${state.clickPower} 🪙`;
@@ -581,7 +986,7 @@ bigClickBtn.addEventListener("pointerdown", (e) => {
   setTimeout(() => plus.remove(), 750);
 
   clearTimeout(clickFlushTimer);
-  clickFlushTimer = setTimeout(flushPendingClicks, 600);
+  clickFlushTimer = setTimeout(flushPendingClicks, 550);
 });
 
 async function flushPendingClicks() {
@@ -607,7 +1012,7 @@ async function flushPendingClicks() {
   } catch (e) {}
 }
 
-$("#upgradeClickBtn").addEventListener("click", async () => {
+$("#upgradeClickBtn").addEventListener("click", async (ev) => {
   await flushPendingClicks();
   try {
     const res = await fetch("/api/upgrade-click", {
@@ -621,6 +1026,7 @@ $("#upgradeClickBtn").addEventListener("click", async () => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Недостаточно монет");
     haptic("medium");
+    spawnParticles(ev.clientX || window.innerWidth / 2, ev.clientY || window.innerHeight / 2, "#38bdf8", 24);
     applyProfile(data.profile);
     toast(data.message || "Сила клика увеличена! ⚡");
   } catch (err) {
@@ -628,7 +1034,6 @@ $("#upgradeClickBtn").addEventListener("click", async () => {
   }
 });
 
-// Регенерация энергии
 setInterval(() => {
   if (state.energy < state.maxEnergy) {
     state.energy = Math.min(state.maxEnergy, state.energy + 3);
@@ -636,7 +1041,9 @@ setInterval(() => {
   }
 }, 1000);
 
-// --- Загрузка и синхронизация ёлки ---
+// ============================================================================
+// 9. ЗАГРУЗКА ЁЛКИ, УКРАШЕНИЕ И СИНХРОНИЗАЦИЯ
+// ============================================================================
 async function refreshTreeData() {
   const q = new URLSearchParams({
     user_id: String(currentUser.id),
@@ -650,14 +1057,17 @@ async function refreshTreeData() {
   state.ornaments = data.ornaments;
   state.donatePacks = data.donate_packs || {};
   state.gramWallet = data.gram_wallet || "";
-  state.decorations = data.decorations;
-  state.stats = data.stats;
+  state.decorations = data.decorations || [];
+  state.stats = data.stats || [];
+  if (data.leaderboard) {
+    state.leaderboard = data.leaderboard;
+  }
   if (data.profile) {
     state.coins = Number(data.profile.coins ?? state.coins);
     state.clickPower = Number(data.profile.click_power ?? state.clickPower);
     state.inventory = data.profile.inventory || state.inventory;
   }
-  $("#chatTitle").textContent = data.tree.chat_title ? `Чат: ${data.tree.chat_title}` : "Общая ёлка чата";
+  $("#chatTitle").textContent = data.tree.chat_title ? `${data.tree.chat_title}` : "Общая новогодняя ёлка";
   if (data.tree.is_finished) {
     $("#hint").textContent = "🎉 Ивент завершён! С Новым годом!";
   }
@@ -666,20 +1076,20 @@ async function refreshTreeData() {
   renderShop();
   renderDonateShop();
   renderDecorations();
-  renderStats();
+  renderLeaderboard();
   saveBackup();
 }
 
 async function initLoadAndSync() {
   try {
     await refreshTreeData();
-    // Проверяем локальный бэкап (на случай если контейнер Render перезапускался)
     const backup = loadLocalBackup();
     if (backup) {
+      const myServerDecs = state.decorations.filter((d) => d.user_id === state.myUserId);
       const needSync =
         (backup.coins && backup.coins > state.coins) ||
         (backup.click_power && backup.click_power > state.clickPower) ||
-        (state.decorations.length === 0 && Array.isArray(backup.decorations) && backup.decorations.length > 0);
+        (myServerDecs.length === 0 && Array.isArray(backup.decorations) && backup.decorations.length > 0);
       if (needSync) {
         const syncRes = await fetch("/api/sync", {
           method: "POST",
@@ -707,7 +1117,8 @@ async function initLoadAndSync() {
 
 async function onDecorationClick(d) {
   if (state.myUserId && d.user_id !== state.myUserId) {
-    toast("Это чужая игрушка 🙂");
+    const owner = d.username ? `@${d.username}` : (d.first_name || "Другой игрок");
+    toast(`🎄 Эту игрушку повесил(а): ${owner}`);
     return;
   }
   if (!confirm("Снять эту игрушку с ёлки обратно в инвентарь?")) return;
@@ -736,14 +1147,22 @@ treeSvg.addEventListener("click", async (e) => {
   if (suppressNextTreeClick) return;
   if (e.target.closest(".dec-item")) return;
 
-  const qty = Number(state.inventory?.[state.selectedType] || 0);
-  if (qty <= 0) {
-    const info = state.ornaments[state.selectedType];
-    toast(`В инвентаре нет «${info?.name || "игрушки"}»! Купи в Магазине 🛍`, true);
+  const pt = clientToPercent(e.clientX, e.clientY);
+  // Проверяем, что нажатие попало именно на крону ёлки, а не в небо или сугробы!
+  if (!isPointInsideTree(pt.x, pt.y)) {
+    haptic("light");
+    spawnParticles(e.clientX, e.clientY, "#94a3b8", 6);
+    toast("Вешай игрушки прямо на веточки ёлки! 🎄", true);
     return;
   }
 
-  const pt = clientToPercent(e.clientX, e.clientY);
+  const qty = Number(state.inventory?.[state.selectedType] || 0);
+  if (qty <= 0) {
+    const info = state.ornaments[state.selectedType];
+    toast(`Нет «${info?.name || "игрушки"}» в инвентаре! Купи в Магазине 🛍`, true);
+    return;
+  }
+
   try {
     const res = await fetch("/api/decorate", {
       method: "POST",
@@ -762,8 +1181,10 @@ treeSvg.addEventListener("click", async (e) => {
     if (!res.ok) {
       throw new Error(data.detail || "Ошибка");
     }
+    const colorHex = state.ornaments[state.selectedType]?.colors?.[state.selectedColor] || "#fde047";
+    spawnParticles(e.clientX, e.clientY, colorHex, 26);
     haptic("medium");
-    toast("Игрушка повешена на ёлку! 🎄");
+    toast("Игрушка повешена на ёлку! ✨");
     if (data.profile) applyProfile(data.profile);
     await refreshTreeData();
   } catch (err) {
@@ -786,8 +1207,13 @@ $("#previewModal").addEventListener("click", (e) => {
   }
 });
 
-drawSnow();
+drawSnowAndStars();
+drawGarlandLights();
 drawTopStar();
 updateCountdown();
 setInterval(updateCountdown, 30000);
+// Периодическое обновление ёлки и лидерборда, чтобы видеть действия других игроков в реальном времени
+setInterval(() => {
+  refreshTreeData().catch(() => {});
+}, 12000);
 initLoadAndSync();

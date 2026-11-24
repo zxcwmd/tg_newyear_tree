@@ -69,6 +69,13 @@ async def init_db():
                 await db.execute(col_sql)
             except Exception:
                 pass
+        # Объединяем игрушки из личных комнат (положительные chat_id > 1) на общую ёлку (chat_id = 1),
+        # так как групповые чаты в Telegram всегда имеют отрицательный chat_id
+        await db.execute(
+            "INSERT OR IGNORE INTO trees (chat_id, chat_title, created_at) VALUES (1, 'Общая новогодняя ёлка', ?)",
+            (datetime.now(timezone.utc).isoformat(),),
+        )
+        await db.execute("UPDATE decorations SET chat_id = 1 WHERE chat_id > 1")
         await db.commit()
 
 
@@ -400,24 +407,27 @@ async def sync_backup(
                             """,
                             (user_id, otype, qty),
                         )
-        # Если в БД для этого чата 0 игрушек, а в бэкапе клиента они есть — восстанавливаем
+        # Если в БД для этого игрока на этой ёлке 0 игрушек, а в его бэкапе они есть — восстанавливаем его игрушки
         if decorations and isinstance(decorations, list):
-            cur = await db.execute("SELECT COUNT(*) AS cnt FROM decorations WHERE chat_id = ?", (chat_id,))
+            cur = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM decorations WHERE chat_id = ? AND user_id = ?",
+                (chat_id, user_id),
+            )
             cnt_row = await cur.fetchone()
             if cnt_row and cnt_row["cnt"] == 0:
-                for d in decorations[:200]:
+                for d in decorations[:100]:
                     otype = d.get("ornament_type", "ball")
                     color = d.get("color", "red")
                     x = float(d.get("x", 50))
                     y = float(d.get("y", 50))
                     d_uid = int(d.get("user_id", user_id))
-                    if otype in ORNAMENTS and 0 <= x <= 100 and 0 <= y <= 100:
+                    if d_uid == user_id and otype in ORNAMENTS and 0 <= x <= 100 and 0 <= y <= 100:
                         await db.execute(
                             """
                             INSERT INTO decorations (chat_id, user_id, ornament_type, color, x, y, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?)
                             """,
-                            (chat_id, d_uid, otype, color, x, y, now),
+                            (chat_id, user_id, otype, color, x, y, now),
                         )
         await db.commit()
 
@@ -427,17 +437,64 @@ async def get_stats(chat_id: int) -> list[dict]:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             """
-            SELECT d.user_id, COALESCE(u.username, '') AS username, COALESCE(u.first_name, 'Участник') AS first_name, COUNT(d.id) AS count
+            SELECT d.user_id,
+                   COALESCE(u.username, '') AS username,
+                   COALESCE(u.first_name, 'Участник') AS first_name,
+                   COALESCE(u.coins, 0) AS coins,
+                   COUNT(d.id) AS count
             FROM decorations d
             LEFT JOIN users u ON u.user_id = d.user_id
             WHERE d.chat_id = ?
             GROUP BY d.user_id
-            ORDER BY count DESC
+            ORDER BY count DESC, coins DESC
             """,
             (chat_id,),
         )
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
+
+
+async def get_global_leaderboard() -> dict:
+    """Возвращает общий рейтинг всех игроков бота (по наряженным игрушкам и по монетам)."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur_toys = await db.execute(
+            """
+            SELECT u.user_id,
+                   COALESCE(u.username, '') AS username,
+                   COALESCE(u.first_name, 'Игрок') AS first_name,
+                   COALESCE(u.coins, 0) AS coins,
+                   COALESCE(u.click_power, 1) AS click_power,
+                   COUNT(d.id) AS count
+            FROM users u
+            LEFT JOIN decorations d ON d.user_id = u.user_id
+            GROUP BY u.user_id
+            ORDER BY count DESC, u.coins DESC
+            LIMIT 50
+            """
+        )
+        by_toys = [dict(r) for r in await cur_toys.fetchall()]
+
+        cur_coins = await db.execute(
+            """
+            SELECT u.user_id,
+                   COALESCE(u.username, '') AS username,
+                   COALESCE(u.first_name, 'Игрок') AS first_name,
+                   COALESCE(u.coins, 0) AS coins,
+                   COALESCE(u.click_power, 1) AS click_power,
+                   COUNT(d.id) AS count
+            FROM users u
+            LEFT JOIN decorations d ON d.user_id = u.user_id
+            GROUP BY u.user_id
+            ORDER BY u.coins DESC, count DESC
+            LIMIT 50
+            """
+        )
+        by_coins = [dict(r) for r in await cur_coins.fetchall()]
+        return {
+            "by_toys": by_toys,
+            "by_coins": by_coins,
+        }
 
 
 async def get_unfinished_trees() -> list[dict]:

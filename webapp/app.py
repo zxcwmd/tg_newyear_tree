@@ -195,6 +195,50 @@ async def _ensure_user_from_req(init_data: str, user_model: UserInfoModel | None
     return uid
 
 
+def normalize_chat_id(chat_id: int) -> int:
+    """Групповые чаты в Telegram имеют отрицательный ID (< 0). Все одиночные положительные ID (> 1) объединяем в общую ёлку (1)."""
+    return 1 if chat_id > 1 else chat_id
+
+
+def is_inside_tree(x_pct: float, y_pct: float) -> bool:
+    """Проверяет, попадает ли точка (0..100, 0..100) внутрь кроны одного из 3 ярусов ёлки."""
+    sx = x_pct * 4.0  # 0..400
+    sy = y_pct * 5.0  # 0..500
+    # 3 яруса ёлки: (y_top, y_bottom, top_half_w, bottom_half_w)
+    tiers = [
+        (64.0, 215.0, 8.0, 74.0),
+        (150.0, 325.0, 14.0, 94.0),
+        (240.0, 428.0, 18.0, 118.0),
+    ]
+    for y_top, y_bot, hw_top, hw_bot in tiers:
+        if y_top <= sy <= y_bot:
+            t = (sy - y_top) / (y_bot - y_top)
+            max_hw = hw_top + t * (hw_bot - hw_top)
+            if abs(sx - 200.0) <= max_hw:
+                return True
+    return False
+
+
+def clamp_to_tree(x_pct: float, y_pct: float) -> tuple[float, float]:
+    """Притягивает координаты внутрь кроны ёлки (для перетаскивания)."""
+    sx = x_pct * 4.0
+    sy = max(68.0, min(424.0, y_pct * 5.0))
+    tiers = [
+        (64.0, 215.0, 8.0, 72.0),
+        (150.0, 325.0, 14.0, 92.0),
+        (240.0, 428.0, 18.0, 115.0),
+    ]
+    allowed_hw = 20.0
+    for y_top, y_bot, hw_top, hw_bot in tiers:
+        if y_top <= sy <= y_bot:
+            t = (sy - y_top) / (y_bot - y_top)
+            hw = hw_top + t * (hw_bot - hw_top)
+            if hw > allowed_hw:
+                allowed_hw = hw
+    clamped_sx = max(200.0 - allowed_hw, min(200.0 + allowed_hw, sx))
+    return round(clamped_sx / 4.0, 1), round(sy / 5.0, 1)
+
+
 @app.get("/")
 async def index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
@@ -210,6 +254,18 @@ async def get_ornaments():
     return ORNAMENTS
 
 
+@app.get("/api/leaderboard")
+async def get_leaderboard_endpoint(chat_id: int = Query(default=1)):
+    cid = normalize_chat_id(chat_id)
+    chat_stats = await db.get_stats(cid)
+    global_lb = await db.get_global_leaderboard()
+    return {
+        "chat_stats": chat_stats,
+        "by_toys": global_lb["by_toys"],
+        "by_coins": global_lb["by_coins"],
+    }
+
+
 @app.get("/api/tree/{chat_id}")
 async def get_tree(
     chat_id: int,
@@ -217,18 +273,21 @@ async def get_tree(
     username: str = Query(default=""),
     first_name: str = Query(default="Игрок"),
 ):
-    tree = await db.get_tree(chat_id)
+    cid = normalize_chat_id(chat_id)
+    tree = await db.get_tree(cid)
     if not tree:
-        default_title = "Демо-чат друзей" if chat_id == 1 else f"Чат #{chat_id}"
-        tree = await db.get_or_create_tree(chat_id, default_title)
+        default_title = "Общая новогодняя ёлка" if cid == 1 else f"Чат #{cid}"
+        tree = await db.get_or_create_tree(cid, default_title)
     await db.upsert_user(user_id, username=username, first_name=first_name)
     profile = await db.get_user_profile(user_id)
-    decorations = await db.get_decorations(chat_id)
-    stats = await db.get_stats(chat_id)
+    decorations = await db.get_decorations(cid)
+    stats = await db.get_stats(cid)
+    leaderboard = await db.get_global_leaderboard()
     return {
         "tree": tree,
         "decorations": decorations,
         "stats": stats,
+        "leaderboard": leaderboard,
         "ornaments": ORNAMENTS,
         "donate_packs": DONATE_PACKS,
         "gram_wallet": GRAM_WALLET_ADDRESS,
@@ -239,12 +298,13 @@ async def get_tree(
 @app.post("/api/sync")
 async def sync_backup_endpoint(req: SyncBackupRequest):
     uid = await _ensure_user_from_req(req.init_data, req.user)
-    tree = await db.get_tree(req.chat_id)
+    cid = normalize_chat_id(req.chat_id)
+    tree = await db.get_tree(cid)
     if not tree:
-        default_title = "Демо-чат друзей" if req.chat_id == 1 else f"Чат #{req.chat_id}"
-        await db.get_or_create_tree(req.chat_id, default_title)
+        default_title = "Общая новогодняя ёлка" if cid == 1 else f"Чат #{cid}"
+        await db.get_or_create_tree(cid, default_title)
     await db.sync_backup(
-        chat_id=req.chat_id,
+        chat_id=cid,
         user_id=uid,
         coins=req.coins,
         click_power=req.click_power,
@@ -252,13 +312,15 @@ async def sync_backup_endpoint(req: SyncBackupRequest):
         decorations=req.decorations,
     )
     profile = await db.get_user_profile(uid)
-    decorations = await db.get_decorations(req.chat_id)
-    stats = await db.get_stats(req.chat_id)
+    decorations = await db.get_decorations(cid)
+    stats = await db.get_stats(cid)
+    leaderboard = await db.get_global_leaderboard()
     return {
         "ok": True,
         "profile": profile,
         "decorations": decorations,
         "stats": stats,
+        "leaderboard": leaderboard,
     }
 
 
@@ -337,18 +399,19 @@ async def claim_donate_pack(req: DonateOrderRequest):
 
 @app.post("/api/decorate")
 async def decorate(req: DecorateRequest):
-    tree = await db.get_tree(req.chat_id)
+    cid = normalize_chat_id(req.chat_id)
+    tree = await db.get_tree(cid)
     if not tree:
-        default_title = "Демо-чат друзей" if req.chat_id == 1 else f"Чат #{req.chat_id}"
-        tree = await db.get_or_create_tree(req.chat_id, default_title)
+        default_title = "Общая новогодняя ёлка" if cid == 1 else f"Чат #{cid}"
+        tree = await db.get_or_create_tree(cid, default_title)
     if tree.get("is_finished"):
         raise HTTPException(400, "Ёлка уже подведена! Ивент завершён 🎉")
     if req.ornament_type not in ORNAMENTS:
         raise HTTPException(400, "Неизвестная игрушка")
     if req.color not in ORNAMENTS[req.ornament_type]["colors"]:
         raise HTTPException(400, "Неизвестный цвет")
-    if not (0 <= req.x <= 100 and 0 <= req.y <= 100):
-        raise HTTPException(400, "Координаты вне диапазона")
+    if not is_inside_tree(req.x, req.y):
+        raise HTTPException(400, "Вешай игрушки прямо на веточки ёлки! 🎄")
 
     uid = await _ensure_user_from_req(req.init_data, req.user)
     has_item = await db.consume_inventory_item(uid, req.ornament_type)
@@ -358,20 +421,19 @@ async def decorate(req: DecorateRequest):
             400,
             f"В инвентаре нет «{info['emoji']} {info['name']}»! Купи в Магазине за {info['price']} 🪙",
         )
-    dec_id = await db.add_decoration(req.chat_id, uid, req.ornament_type, req.color, req.x, req.y)
+    dec_id = await db.add_decoration(cid, uid, req.ornament_type, req.color, req.x, req.y)
     profile = await db.get_user_profile(uid)
     return {"id": dec_id, "ok": True, "profile": profile}
 
 
 @app.post("/api/move")
 async def move_decoration(req: MoveRequest):
-    if not (0 <= req.x <= 100 and 0 <= req.y <= 100):
-        raise HTTPException(400, "Координаты вне диапазона")
+    cx, cy = clamp_to_tree(req.x, req.y)
     uid = await _ensure_user_from_req(req.init_data, req.user)
-    ok = await db.move_decoration(req.decoration_id, uid, req.x, req.y)
+    ok = await db.move_decoration(req.decoration_id, uid, cx, cy)
     if not ok:
         raise HTTPException(403, "Можно перемещать только свои игрушки")
-    return {"ok": True}
+    return {"ok": True, "x": cx, "y": cy}
 
 
 @app.post("/api/delete")
@@ -380,7 +442,6 @@ async def delete_decoration(req: DeleteRequest):
     deleted = await db.delete_decoration(req.decoration_id, uid)
     if not deleted:
         raise HTTPException(403, "Можно снимать только свои игрушки")
-    # Возвращаем снятую игрушку обратно в инвентарь игрока
     await db.return_inventory_item(uid, deleted["ornament_type"])
     profile = await db.get_user_profile(uid)
     return {"ok": True, "profile": profile}
@@ -388,11 +449,12 @@ async def delete_decoration(req: DeleteRequest):
 
 @app.get("/api/final-image/{chat_id}")
 async def final_image(chat_id: int):
-    tree = await db.get_tree(chat_id)
+    cid = normalize_chat_id(chat_id)
+    tree = await db.get_tree(cid)
     if not tree:
         raise HTTPException(404, "Tree not found")
-    decorations = await db.get_decorations(chat_id)
-    png = generate_tree_image(decorations, title=f"Ёлка чата: {tree.get('chat_title') or chat_id}")
+    decorations = await db.get_decorations(cid)
+    png = generate_tree_image(decorations, title=f"Ёлка: {tree.get('chat_title') or cid}")
     return Response(content=png, media_type="image/png")
 
 
