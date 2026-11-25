@@ -282,7 +282,7 @@ async def cmd_tree(message: Message):
         tree = await db.get_tree(target_id) or await db.get_or_create_tree(target_id, target_title)
         members = await db.get_tree_members(target_id)
     decorations = await db.get_decorations(target_id)
-    png = generate_tree_image(decorations, title=f"Ёлка: {target_title}", members=members)
+    png = generate_tree_image(decorations, title=target_title, members=members)
     photo = BufferedInputFile(png, filename="tree.png")
     people = f" • участников: <b>{max(1, len(members))}</b> 👥" if members else ""
     await message.answer_photo(
@@ -357,7 +357,7 @@ async def finish_tree(bot: Bot, chat_id: int, chat_title: str):
     decorations = await db.get_decorations(chat_id)
     stats = await db.get_stats(chat_id)
     members = await db.get_tree_members(chat_id)
-    png = generate_tree_image(decorations, title=f"Ёлка: {chat_title}", members=members)
+    png = generate_tree_image(decorations, title=chat_title, members=members)
     greeting = random.choice(GREETINGS)
     caption = (
         f"{greeting}\n\n"

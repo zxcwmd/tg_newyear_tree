@@ -20,8 +20,6 @@ from config import (
     LEGACY_SHARED_TREE_ID,
     LOOTBOX_POOL,
     LOOTBOX_PRICE,
-    NFT_MINT_ENABLED,
-    TELEGRAM_GIFTS_ENABLED,
     ORNAMENTS,
     PERSONAL_TREE_BASE,
     TREE_THEMES,
@@ -31,7 +29,6 @@ from config import (
     personal_tree_owner,
 )
 import database as db
-import telegram_gifts
 from tree_image import generate_tree_image
 
 log = logging.getLogger(__name__)
@@ -212,29 +209,6 @@ class CreateTeamTreeRequest(BaseModel):
     user: UserInfoModel | None = None
 
 
-class AttachTelegramGiftRequest(BaseModel):
-    owned_gift_id: str
-    message: str = ""
-    init_data: str = ""
-    user: UserInfoModel | None = None
-
-
-class DetachTelegramGiftRequest(BaseModel):
-    owned_gift_id: str
-    init_data: str = ""
-    user: UserInfoModel | None = None
-
-
-class NftGiftRequest(BaseModel):
-    to_user_id: int
-    token_id: int
-    message: str = ""
-    wallet: str = ""
-    to_first_name: str = ""
-    init_data: str = ""
-    user: UserInfoModel | None = None
-
-
 class JoinTeamTreeRequest(BaseModel):
     invite_code: str
     init_data: str = ""
@@ -265,28 +239,6 @@ async def _ensure_user_from_req(init_data: str, user_model: UserInfoModel | None
     return uid
 
 
-def uid_from_init_data(init_data: str) -> int:
-    """ID игрока из подписанного Telegram initData (0, если его нет)."""
-    raw = validate_init_data(init_data).get("user", "")
-    if not raw:
-        return 0
-    try:
-        parsed = json.loads(raw)
-        return int(parsed.get("id") or 0)
-    except Exception:
-        return 0
-
-
-def _resolve_uid(init_data: str, user_model: UserInfoModel | None) -> int:
-    """ID игрока: подписанный initData важнее присланного клиентом user_id."""
-    uid = uid_from_init_data(init_data)
-    if uid:
-        return uid
-    if user_model is not None and user_model.id:
-        return int(user_model.id)
-    return 0
-
-
 def normalize_chat_id(chat_id: int, user_id: int = 0) -> int:
     """Приводит chat_id к «настоящей» ёлке.
 
@@ -315,46 +267,6 @@ def assert_tree_access(cid: int, user_id: int):
     """Личную ёлку видит и меняет только её владелец."""
     if is_personal_tree_id(cid) and personal_tree_owner(cid) not in (0, user_id):
         raise HTTPException(403, "Это личная ёлка другого игрока 🎄")
-
-
-def _merge_postcard_gifts(local_gifts: list[dict], telegram_gifts: list[dict]) -> list[dict]:
-    """Подарки для полки на открытке: прикреплённые Telegram-подарки + внутриигровые NFT.
-
-    У Telegram-подарков есть владелец-игрок (from_name) и номер/название токена.
-    """
-    merged: list[dict] = []
-    for g in telegram_gifts or []:
-        is_nft = bool(g.get("is_nft"))
-        if is_nft and g.get("number"):
-            badge = f"NFT №{g['number']}"
-        elif is_nft:
-            badge = "Telegram NFT"
-        else:
-            badge = "Telegram"
-        merged.append(
-            {
-                "emoji": g.get("emoji") or "🎁",
-                "title": g.get("title") or "Telegram-подарок",
-                "from_name": "Telegram" if is_nft else (g.get("sender_name") or "Telegram"),
-                "message": g.get("message") or "",
-                "token_id": g.get("number") or 0,
-                "badge": badge,
-                "kind": "unique" if is_nft else "regular",
-            }
-        )
-    for g in local_gifts or []:
-        merged.append(
-            {
-                "emoji": g.get("emoji") or "🎁",
-                "title": g.get("title") or "NFT-подарок",
-                "from_name": g.get("from_name") or "друга",
-                "message": g.get("message") or "",
-                "token_id": g.get("token_id") or 0,
-                "badge": f"#{g.get('token_id') or 0}",
-                "kind": "game",
-            }
-        )
-    return merged
 
 
 def is_inside_tree(x_pct: float, y_pct: float) -> bool:
@@ -495,11 +407,6 @@ async def get_tree(
         "is_personal_tree": is_personal_tree_id(cid),
         "members": members,
         "members_count": len(members),
-        "nft_gifts": await db.get_nft_gifts(cid),
-        "nft_catalog": db.NFT_GIFTS,
-        "nft_mint_enabled": NFT_MINT_ENABLED,
-        "telegram_gifts": await db.get_attached_gifts(cid),
-        "telegram_gifts_enabled": TELEGRAM_GIFTS_ENABLED,
         "personal_tree_id": personal_tree_id(user_id),
         "team_tree": await db.get_owned_team_tree(user_id),
     }
@@ -561,112 +468,6 @@ async def join_team_tree_endpoint(req: JoinTeamTreeRequest):
         "profile": profile,
         "referral_bonus_applied": referral_bonus,
     }
-
-
-@app.get("/api/telegram-gifts")
-async def my_telegram_gifts(user_id: int = Query(default=0), init_data: str = Query(default="")):
-    """Подарки игрока из Telegram (regular + unique/NFT) через Bot API getUserGifts."""
-    signed_uid = uid_from_init_data(init_data)
-    uid = signed_uid or int(user_id or 0)
-    if uid <= 0:
-        raise HTTPException(400, "Не удалось определить игрока")
-    if signed_uid and user_id and int(user_id) != signed_uid:
-        raise HTTPException(403, "Подарки другого игрока недоступны")
-    try:
-        gifts = await telegram_gifts.fetch_user_gifts(uid)
-    except telegram_gifts.TelegramGiftsUnavailable as e:
-        # Фронтенд покажет ручной ввод ссылки t.me/nft/... как запасной вариант
-        return {
-            "ok": False,
-            "available": False,
-            "reason": str(e),
-            "gifts": [],
-            "fallback": "manual_link",
-        }
-    attached_ids = {g["owned_gift_id"] for g in await db.get_user_attached_gifts(uid)}
-    for g in gifts:
-        g["attached"] = g["owned_gift_id"] in attached_ids
-    return {"ok": True, "available": True, "gifts": gifts, "count": len(gifts)}
-
-
-@app.post("/api/telegram-gifts/attach")
-async def attach_telegram_gift(req: AttachTelegramGiftRequest):
-    """Прикрепляет собственный Telegram-подарок игрока к открытке ёлки."""
-    uid = await _ensure_user_from_req(req.init_data, req.user)
-    cid = await resolve_tree_id(0, uid)
-    assert_tree_access(cid, uid)
-
-    owned_id = (req.owned_gift_id or "").strip()
-    if not owned_id:
-        raise HTTPException(400, "Не указан подарок")
-
-    # Проверяем владение через Bot API (нельзя прикрепить чужой подарок)
-    try:
-        gift = await telegram_gifts.fetch_user_gift(uid, owned_id)
-    except telegram_gifts.TelegramGiftsUnavailable as e:
-        raise HTTPException(503, f"Telegram сейчас недоступен: {e}")
-    if not gift:
-        raise HTTPException(403, "Этот подарок не найден среди твоих Telegram-подарков")
-
-    row = await db.attach_telegram_gift(cid, uid, gift, message=req.message)
-    if not row:
-        raise HTTPException(400, "Не удалось прикрепить подарок")
-    return {"ok": True, "gift": row, "telegram": gift}
-
-
-@app.post("/api/telegram-gifts/detach")
-async def detach_telegram_gift(req: DetachTelegramGiftRequest):
-    uid = await _ensure_user_from_req(req.init_data, req.user)
-    cid = await resolve_tree_id(0, uid)
-    ok = await db.detach_telegram_gift(cid, uid, (req.owned_gift_id or "").strip())
-    if not ok:
-        raise HTTPException(404, "Подарок не прикреплён к этой ёлке")
-    return {"ok": True}
-
-
-@app.get("/api/nft-gifts/catalog")
-async def nft_gifts_catalog():
-    """Коллекция NFT-подарков, которые можно прикрепить к открытке."""
-    return {"ok": True, "catalog": db.NFT_GIFTS}
-
-
-@app.post("/api/nft-gifts")
-async def send_nft_gift(req: NftGiftRequest):
-    """Прикрепляет NFT-подарок к открытке: сначала локальный реестр, затем (опционально) минтинг."""
-    uid = await _ensure_user_from_req(req.init_data, req.user)
-    if req.to_user_id == uid:
-        raise HTTPException(400, "Нельзя отправить подарок самому себе")
-    item = db.get_nft_gift_item(req.token_id)
-    if not item:
-        raise HTTPException(404, "Такого NFT-подарка нет в коллекции")
-    me = await db.get_user_profile(uid)
-    gift = await db.add_nft_gift(
-        to_user_id=req.to_user_id,
-        from_user_id=uid,
-        token_id=req.token_id,
-        message=req.message,
-        wallet=req.wallet,
-        from_name=me.get("first_name") or "Друг",
-    )
-    if not gift:
-        raise HTTPException(400, "Не удалось прикрепить подарок")
-    return {
-        "ok": True,
-        "gift": gift,
-        "item": item,
-        # Пока подарок живёт в локальном реестре. См. NFT_INTEGRATION.md:
-        # при NFT_MINT_ENABLED=1 здесь будет результат минта в TON/Telegram Gifts.
-        "minted": False,
-        "mint_enabled": NFT_MINT_ENABLED,
-    }
-
-
-@app.get("/api/nft-gifts/{chat_id}")
-async def list_nft_gifts(chat_id: int, user_id: int = Query(default=0)):
-    cid = await resolve_tree_id(chat_id, user_id)
-    assert_tree_access(cid, user_id)
-    gifts = await db.get_nft_gifts(cid)
-    return {"ok": True, "gifts": gifts, "catalog": db.NFT_GIFTS}
 
 
 @app.post("/api/daily-claim")
@@ -865,26 +666,6 @@ async def delete_decoration(req: DeleteRequest):
     await db.return_inventory_item(uid, deleted["ornament_type"])
     profile = await db.get_user_profile(uid)
     return {"ok": True, "profile": profile}
-
-
-@app.get("/api/final-image/{chat_id}")
-async def final_image(chat_id: int, user_id: int = Query(default=0)):
-    cid = await resolve_tree_id(chat_id, user_id)
-    assert_tree_access(cid, user_id)
-    tree = await db.get_tree(cid)
-    if not tree:
-        raise HTTPException(404, "Tree not found")
-    decorations = await db.get_decorations(cid)
-    members = await db.get_tree_members(cid) if (cid < 0 and not is_personal_tree_id(cid)) else []
-    gifts = await db.get_nft_gifts(cid)
-    tg_gifts = await db.get_attached_gifts(cid)
-    png = generate_tree_image(
-        decorations,
-        title=str(tree.get("chat_title") or cid),
-        members=members,
-        gifts=_merge_postcard_gifts(gifts, tg_gifts),
-    )
-    return Response(content=png, media_type="image/png")
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

@@ -285,16 +285,86 @@ def _draw_background(img: Image.Image, draw: ImageDraw.ImageDraw):
     md.ellipse([mx - mr * 2.1, my - mr * 2.1, mx + mr * 2.1, my + mr * 2.1], fill=(253, 230, 138, 26))
     moon = moon.filter(ImageFilter.GaussianBlur(_s(18)))
     img.alpha_composite(moon)
-    draw.ellipse([mx - mr, my - mr, mx + mr, my + mr], fill=(254, 240, 138))
-    draw.ellipse([mx - mr * 0.72, my - mr * 0.9, mx + mr * 0.3, my + mr * 0.1], fill=(255, 251, 214))
-    # «Тени» кратеров
-    for dx, dy, rr in ((-0.34, 0.2, 0.18), (0.22, -0.26, 0.13), (0.3, 0.32, 0.1)):
-        cx, cy, cr = mx + mr * dx, my + mr * dy, mr * rr
-        draw.ellipse([cx - cr, cy - cr, cx + cr, cy + cr], fill=(233, 213, 112))
+    # Тело луны: радиальный градиент (свет сверху-слева к тёплому низу)
+    for i in range(int(mr), 0, -1):
+        t = i / mr
+        col = _mix((255, 253, 224), (240, 206, 122), t ** 1.6)
+        draw.ellipse([mx - i, my - i, mx + i, my + i], fill=col)
+    # Мягкий блик
+    gloss = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
+    ImageDraw.Draw(gloss).ellipse(
+        [mx - mr * 0.85, my - mr * 0.9, mx - mr * 0.05, my - mr * 0.02], fill=(255, 255, 255, 70)
+    )
+    gloss = gloss.filter(ImageFilter.GaussianBlur(_s(6)))
+    img.alpha_composite(gloss)
+    # Кратеры: мягкие, с подсветкой снизу
+    for dx, dy, rr in ((-0.34, 0.2, 0.19), (0.22, -0.26, 0.14), (0.34, 0.34, 0.1), (-0.06, 0.5, 0.07)):
+        cxx, cyy, cr = mx + mr * dx, my + mr * dy, mr * rr
+        draw.ellipse([cxx - cr, cyy - cr, cxx + cr, cyy + cr], fill=(228, 205, 120))
+        draw.ellipse([cxx - cr * 0.9, cyy - cr * 0.95, cxx + cr * 0.5, cyy + cr * 0.1], fill=(243, 222, 150))
+
+
+def _hill(img: Image.Image, base_y: float, amp: float, waves, top_color, bottom_color,
+          crest_alpha: int = 0, seed: int = 0):
+    """Плавный сугроб: синусоидальный силуэт + вертикальный градиент + блик на гребне.
+
+    waves — список (амплитуда, частота, фаза) для суммы синусов: силуэт получается
+    органичным, без заметных «дуг» от наложенных эллипсов.
+    """
+    rnd = random.Random(seed)
+    pts = []
+    step = 6 * SCALE
+    x = -step * 2
+    while x <= SW + step * 2:
+        t = x / SW
+        y = base_y
+        for a, f, ph in waves:
+            y += math.sin(t * math.pi * f + ph) * amp * a
+        y += math.sin(t * math.pi * 0.7 + rnd.uniform(-0.15, 0.15)) * amp * 0.18
+        pts.append((x, y))
+        x += step
+    poly = pts + [(SW + step * 2, SH + step), (-step * 2, SH + step)]
+
+    # Маску слегка размываем — край сугроба получается мягким, как настоящий снег
+    mask = Image.new("L", (SW, SH), 0)
+    ImageDraw.Draw(mask).polygon(poly, fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(_s(2.2)))
+
+    # Вертикальный градиент: у гребня светлее, ниже — холоднее
+    grad = Image.new("RGB", (SW, SH), bottom_color)
+    gd = ImageDraw.Draw(grad)
+    y_top = int(min(p[1] for p in pts))
+    for yy in range(max(0, y_top), SH):
+        t = (yy - y_top) / max(1.0, SH - y_top)
+        gd.line([(0, yy), (SW, yy)], fill=_mix(top_color, bottom_color, min(1.0, t * 1.25)))
+    img.paste(grad, (0, 0), mask)
+
+    # Блик по кромке сугроба — мягкая светлая линия, повторяющая силуэт
+    if crest_alpha:
+        crest = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
+        ImageDraw.Draw(crest).line(pts, fill=(255, 255, 255, crest_alpha),
+                                   width=max(1, int(SCALE * 3.0)))
+        crest = crest.filter(ImageFilter.GaussianBlur(_s(5.5)))
+        img.alpha_composite(crest)
+    return pts
+
+
+def _tree_mask() -> Image.Image:
+    """Маска силуэта ёлки (все три яруса) — для снега и подсветки по форме."""
+    mask = Image.new("L", (SW, SH), 0)
+    md = ImageDraw.Draw(mask)
+    cx = _s(400)
+    for top, bottom, hbot, teeth in (
+        (_s(70), _s(420), _s(152), 7),
+        (_s(258), _s(628), _s(214), 8),
+        (_s(444), _s(858), _s(288), 9),
+    ):
+        md.polygon(_pine_tier(cx, top, bottom, hbot, teeth), fill=255)
+    return mask.filter(ImageFilter.GaussianBlur(_s(1.2)))
 
 
 def _draw_ground(img: Image.Image, draw: ImageDraw.ImageDraw):
-    """Сугробы с плавными краями, искрами и тенью под ёлкой."""
+    """Сугробы с плавными силуэтами, искрами и тенью под ёлкой."""
     # Мягкое холодное свечение у горизонта
     glow = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
@@ -302,41 +372,79 @@ def _draw_ground(img: Image.Image, draw: ImageDraw.ImageDraw):
     glow = glow.filter(ImageFilter.GaussianBlur(_s(40)))
     img.alpha_composite(glow)
 
-    # Задний сугроб (светлее, дальше)
-    draw.ellipse([-_s(120), _s(858), SW * 0.66, SH + _s(70)], fill=(214, 228, 245))
-    draw.ellipse([SW * 0.42, _s(868), SW + _s(140), SH + _s(90)], fill=(233, 241, 252))
+    # Дальний сугроб: холодный, уходит в дымку горизонта
+    _hill(
+        img, _s(866), _s(30),
+        [(1.0, 0.85, 0.4), (0.5, 2.0, 2.1), (0.22, 3.7, 1.1)],
+        (222, 234, 250), (206, 222, 244), crest_alpha=48, seed=3,
+    )
+    # Дымка на стыке неба и снега
+    haze = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
+    ImageDraw.Draw(haze).ellipse([-_s(200), _s(836), SW + _s(200), SH + _s(40)], fill=(198, 220, 246, 80))
+    haze = haze.filter(ImageFilter.GaussianBlur(_s(28)))
+    img.alpha_composite(haze)
 
-    # Передний сугроб с объёмным низом
-    draw.ellipse([-_s(180), _s(902), SW * 0.52, SH + _s(120)], fill=(255, 255, 255))
-    draw.ellipse([SW * 0.33, _s(908), SW + _s(200), SH + _s(130)], fill=(248, 252, 255))
-    draw.ellipse([SW * 0.24, _s(930), SW * 0.86, SH + _s(150)], fill=(226, 238, 250))
+    # Средний сугроб: светлее, чуть более выраженный силуэт
+    _hill(
+        img, _s(944), _s(44),
+        [(1.0, 0.65, 2.4), (0.42, 1.7, 0.7), (0.2, 3.1, 1.2)],
+        (252, 254, 255), (228, 240, 253), crest_alpha=72, seed=8,
+    )
+    # Передний сугроб: самый близкий и светлый, с тёплым бликом от луны
+    _hill(
+        img, _s(1030), _s(52),
+        [(1.0, 0.55, 4.1), (0.3, 1.6, 5.3), (0.14, 2.9, 0.2)],
+        (255, 255, 255), (238, 246, 255), crest_alpha=96, seed=14,
+    )
+    moon_glow = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
+    ImageDraw.Draw(moon_glow).ellipse([SW * 0.48, _s(1010), SW * 0.9, _s(1090)], fill=(255, 250, 226, 55))
+    moon_glow = moon_glow.filter(ImageFilter.GaussianBlur(_s(24)))
+    img.alpha_composite(moon_glow)
 
     # Тень под ёлкой
     shadow = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
     sd = ImageDraw.Draw(shadow)
-    sd.ellipse([_s(112), _s(872), _s(688), _s(948)], fill=(12, 26, 52, 150))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(_s(16)))
+    sd.ellipse([_s(112), _s(872), _s(688), _s(944)], fill=(12, 26, 52, 120))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(_s(18)))
     img.alpha_composite(shadow)
 
-    # Блёстки на снегу
+    # Блёстки на снегу — только вне тени под ёлкой
     rnd = random.Random(21)
     for _ in range(150):
         x = rnd.uniform(0, SW)
-        y = rnd.uniform(_s(884), SH)
+        y = rnd.uniform(_s(890), SH)
         if not (SW * 0.30 < x < SW * 0.70 and y < _s(950)):
             r = rnd.uniform(0.8, 2.4) * SCALE
             draw.ellipse([x - r, y - r, x + r, y + r], fill=(255, 255, 255, rnd.randint(120, 230)))
 
 
-def _draw_snowfall(draw: ImageDraw.ImageDraw):
-    """Крупные снежинки перед ёлкой — добавляют глубину."""
+def _draw_snowfall(img: Image.Image, draw: ImageDraw.ImageDraw):
+    """Снегопад: дальние мелкие точки + ближние пушистые хлопья с мягким ореолом."""
     rnd = random.Random(33)
-    for _ in range(70):
+
+    # Дальний план — мелкая крупа, россыпь по всему холсту
+    for _ in range(110):
         x = rnd.uniform(0, SW)
         y = rnd.uniform(0, SH)
-        r = rnd.uniform(1.4, 3.6) * SCALE
-        a = rnd.randint(90, 210)
-        draw.ellipse([x - r, y - r, x + r, y + r], fill=(255, 255, 255, a))
+        r = rnd.uniform(0.7, 1.8) * SCALE
+        draw.ellipse([x - r, y - r, x + r, y + r], fill=(255, 255, 255, rnd.randint(60, 140)))
+
+    # Ближний план — крупные хлопья с ореолом (мягкое свечение вокруг)
+    flakes = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
+    fd = ImageDraw.Draw(flakes)
+    cores = []
+    for _ in range(34):
+        x = rnd.uniform(0, SW)
+        y = rnd.uniform(0, SH * 0.92)
+        r = rnd.uniform(2.2, 4.4) * SCALE
+        cores.append((x, y, r))
+        fd.ellipse([x - r * 1.9, y - r * 1.9, x + r * 1.9, y + r * 1.9], fill=(255, 255, 255, 26))
+    flakes = flakes.filter(ImageFilter.GaussianBlur(_s(3)))
+    img.alpha_composite(flakes)
+    for x, y, r in cores:
+        draw.ellipse([x - r, y - r, x + r, y + r], fill=(255, 255, 255, rnd.randint(150, 220)))
+        # Маленький блик смещён вверх-влево — хлопья выглядят объёмнее
+        draw.ellipse([x - r * 0.7, y - r * 0.8, x + r * 0.1, y - r * 0.05], fill=(255, 255, 255, 90))
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -379,8 +487,10 @@ def _draw_tier(img: Image.Image, draw: ImageDraw.ImageDraw, poly, y0: float, y1:
     img.alpha_composite(shadow)
 
     # 2) Маска яруса
+    # Маску слегка размываем — край сугроба получается мягким, как настоящий снег
     mask = Image.new("L", (SW, SH), 0)
     ImageDraw.Draw(mask).polygon(poly, fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(_s(2.2)))
 
     # 3) Градиент по вертикали + боковой свет
     grad = Image.new("RGB", (SW, SH), base_color)
@@ -396,6 +506,42 @@ def _draw_tier(img: Image.Image, draw: ImageDraw.ImageDraw, poly, y0: float, y1:
     glow = glow.filter(ImageFilter.GaussianBlur(_s(40)))
     img.paste(grad, (0, 0), mask)
     img.alpha_composite(Image.composite(glow, Image.new("RGBA", (SW, SH), (0, 0, 0, 0)), mask))
+
+    # 3.5) Пушистая кромка: короткие иголки, торчащие наружу по контуру яруса
+    edge = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
+    ed = ImageDraw.Draw(edge)
+    rnd_edge = random.Random(seed + 101)
+    mpx_edge = mask.load()
+    # Контур = точка маски, у которой есть «пустой» сосед на расстоянии ~2px
+    off = max(6, int(SCALE * 9))
+    sampled = 0
+    for _ in range(30000):
+        if sampled >= 900:
+            break
+        ex = rnd_edge.randint(off, SW - off - 1)
+        ey = rnd_edge.randint(max(off + 1, int(y0)), min(SH - off - 1, int(y1) + int(_s(6))))
+        if mpx_edge[ex, ey] < 200:
+            continue
+        is_edge = any(
+            mpx_edge[ex + dx, ey + dy] < 150
+            for dx, dy in ((off, 0), (-off, 0), (0, off), (0, -off))
+        )
+        if not is_edge:
+            continue
+        sampled += 1
+        # Нормаль наружу — от центра ёлки
+        dx = ex - (min(p[0] for p in poly) + max(p[0] for p in poly)) / 2
+        norm = abs(dx) / max(1.0, (max(p[0] for p in poly) - min(p[0] for p in poly)) / 2)
+        ang = 0 if dx > 0 else math.pi
+        ang += rnd_edge.uniform(-0.75, 0.75) * (1.0 - norm * 0.5)
+        ln = rnd_edge.uniform(2.0, 5.6) * SCALE * 0.62
+        tipx, tipy = ex + math.cos(ang) * ln, ey + math.sin(ang) * ln + ln * 0.55
+        col = _mix(base_color, (255, 255, 255), rnd_edge.uniform(0.0, 0.22)) if rnd_edge.random() < 0.5 \
+            else _darken(base_color, rnd_edge.uniform(0.1, 0.3))
+        ed.line([(ex, ey), (tipx, tipy)], fill=col + (rnd_edge.randint(150, 225),),
+                width=max(1, int(SCALE * 0.9)))
+    edge = edge.filter(ImageFilter.GaussianBlur(_s(0.5)))
+    img.alpha_composite(edge)
 
     # 4) Хвоя: мелкие штрихи внутри маски
     rnd = random.Random(seed)
@@ -425,14 +571,38 @@ def _draw_tier(img: Image.Image, draw: ImageDraw.ImageDraw, poly, y0: float, y1:
     sd = ImageDraw.Draw(snow)
     xs = [p[0] for p in poly]
     cx_est = (min(xs) + max(xs)) / 2
+    width_est = max(xs) - min(xs)
+    paw_pts = []
     for x, y in poly:
-        if y < y1 - (y1 - y0) * 0.30:
+        if y < y0 + (y1 - y0) * 0.12:
             continue
-        if abs(x - cx_est) > (max(xs) - min(xs)) * 0.46:
+        if abs(x - cx_est) > width_est * 0.50:
             continue
-        rr = rnd.uniform(2.6, 5.0) * SCALE * 0.6
-        sd.ellipse([x - rr, y - rr * 0.6, x + rr, y + rr * 0.6], fill=(255, 255, 255, 150))
-    snow = snow.filter(ImageFilter.GaussianBlur(_s(1.2)))
+        paw_pts.append((x, y))
+        # дублируем чуть выше — снежная кромка становится толще
+        if rnd.random() < 0.65:
+            paw_pts.append((x + rnd.uniform(-_s(3), _s(3)), y - rnd.uniform(_s(2), _s(7))))
+    # Сначала мягкая синеватая подложка-тень под снегом
+    for x, y in paw_pts:
+        rr = rnd.uniform(3.0, 5.6) * SCALE * 0.6
+        sd.ellipse([x - rr, y - rr * 0.2, x + rr, y + rr * 1.0], fill=(186, 209, 238, 70))
+    for x, y in paw_pts:
+        rr = rnd.uniform(2.8, 5.4) * SCALE * 0.6
+        sd.ellipse([x - rr, y - rr * 0.8, x + rr, y + rr * 0.45], fill=(255, 255, 255, 190))
+    # Блики на снегу
+    for x, y in paw_pts[::2]:
+        rr = rnd.uniform(0.8, 1.8) * SCALE * 0.7
+        sd.ellipse([x - rr, y - rr * 1.2, x + rr, y + rr * 0.2], fill=(255, 255, 255, 235))
+    # Снежные «подушки» на выступающих лапах — плотные белые мазки с тенью
+    for x, y in paw_pts:
+        if rnd.random() > 0.30:
+            continue
+        pad_r = rnd.uniform(3.4, 6.2) * SCALE * 0.62
+        sd.ellipse([x - pad_r * 1.2, y - pad_r * 0.65, x + pad_r * 1.2, y + pad_r * 0.75], fill=(206, 227, 249, 170))
+        sd.ellipse([x - pad_r, y - pad_r * 1.0, x + pad_r, y + pad_r * 0.55], fill=(252, 254, 255, 246))
+        sd.ellipse([x - pad_r * 0.82, y - pad_r * 1.05, x + pad_r * 0.32, y - pad_r * 0.05],
+                   fill=(255, 255, 255, 255))
+    snow = snow.filter(ImageFilter.GaussianBlur(_s(1.0)))
     img.alpha_composite(Image.composite(snow, Image.new("RGBA", (SW, SH), (0, 0, 0, 0)), mask))
 
 
@@ -505,6 +675,25 @@ def _draw_tree(img: Image.Image, draw: ImageDraw.ImageDraw):
     glow = bulbs.filter(ImageFilter.GaussianBlur(_s(6)))
     img.alpha_composite(glow)
     img.alpha_composite(bulbs)
+
+    # Снег по верхнему ярусу: маленькие плотные подушки на «лапах»
+    cap = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
+    cd = ImageDraw.Draw(cap)
+    rnd_cap = random.Random(91)
+    poly_top = _pine_tier(cx, _s(70), _s(420), _s(152), 7)
+    xs_top = [p[0] for p in poly_top]
+    top_y = min(p[1] for p in poly_top)
+    for px_, py_ in poly_top:
+        if py_ < top_y + _s(200) or py_ > top_y + _s(290):
+            continue
+        if abs(px_ - cx) > (max(xs_top) - min(xs_top)) * 0.40:
+            continue
+        rr = _s(rnd_cap.uniform(3.2, 5.6))
+        cd.ellipse([px_ - rr * 1.15, py_ - rr * 0.6, px_ + rr * 1.15, py_ + rr * 0.7], fill=(208, 228, 249, 160))
+        cd.ellipse([px_ - rr, py_ - rr * 0.9, px_ + rr, py_ + rr * 0.5], fill=(252, 254, 255, 244))
+        cd.ellipse([px_ - rr * 0.8, py_ - rr * 0.95, px_ + rr * 0.28, py_ - rr * 0.02], fill=(255, 255, 255, 255))
+    cap = cap.filter(ImageFilter.GaussianBlur(_s(0.8)))
+    img.alpha_composite(cap)
 
     # Макушка
     _draw_star(img, draw, cx, _s(84), _s(46), STAR_COLOR)
@@ -884,82 +1073,6 @@ def _draw_person(img: Image.Image, draw: ImageDraw.ImageDraw, cx: float, cy: flo
     d.ellipse([tip_x - pom_r * 0.5, tip_y - pom_r * 0.6, tip_x + pom_r * 0.2, tip_y - pom_r * 0.1], fill=(255, 255, 255))
 
 
-def _draw_nft_gifts(img: Image.Image, draw: ImageDraw.ImageDraw, gifts: list[dict]):
-    """Полка с прикреплёнными NFT-подарками у подножия ёлки."""
-    if not gifts:
-        return
-    shown = gifts[:4]
-    card_w, card_h = _s(210), _s(104)
-    gap = _s(12)
-    if len(shown) > 2:  # компактнее, чтобы 3–4 карточки влезли по ширине
-        card_w = _s(186)
-    total = len(shown) * card_w + (len(shown) - 1) * gap
-    start_x = SW / 2 - total / 2
-    base_y = _s(730)
-
-    # Подложка-полка
-    shelf = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
-    ImageDraw.Draw(shelf).rounded_rectangle(
-        [start_x - _s(16), base_y - _s(10), start_x + total + _s(16), base_y + card_h + _s(18)],
-        radius=_s(18), fill=(8, 16, 32, 120),
-    )
-    shelf = shelf.filter(ImageFilter.GaussianBlur(_s(6)))
-    img.alpha_composite(shelf)
-
-    title_font = _load_font(int(_s(14)))
-    sub_font = _load_font(int(_s(11)))
-
-    def _trim(text: str, font, max_w: float) -> str:
-        """Обрезает строку по реальной ширине шрифта."""
-        text = str(text)
-        if draw.textlength(text, font=font) <= max_w:
-            return text
-        while text and draw.textlength(text + "…", font=font) > max_w:
-            text = text[:-1]
-        return text + "…"
-
-    for i, gift in enumerate(shown):
-        x0 = start_x + i * (card_w + gap)
-        y0 = base_y
-        # Карточка с «фольгой» и рамкой
-        card = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
-        cd = ImageDraw.Draw(card)
-        cd.rounded_rectangle([x0, y0, x0 + card_w, y0 + card_h], radius=_s(14), fill=(18, 28, 50, 235),
-                             outline=(253, 224, 71, 210), width=max(1, int(SCALE * 1.5)))
-        # Лёгкий блик сверху
-        cd.rounded_rectangle([x0 + _s(2), y0 + _s(2), x0 + card_w - _s(2), y0 + card_h * 0.45],
-                             radius=_s(12), fill=(255, 255, 255, 16))
-        img.alpha_composite(card)
-
-        # Эмодзи-медальон
-        _draw_emoji(
-            img, draw, x0 + _s(30), y0 + card_h / 2, _s(36),
-            gift.get("emoji") or "🎁", gift.get("kind"),
-        )
-
-        # Тексты: название, подпись «от …» и сообщение (с обрезкой по ширине)
-        text_x = x0 + _s(58)
-        text_w = card_w - _s(70)
-        title = _trim(gift.get("title") or "NFT-подарок", title_font, text_w)
-        draw.text((text_x, y0 + _s(16)), title, font=title_font, fill=(255, 249, 219))
-        from_name = _trim(gift.get("from_name") or "друга", sub_font, text_w - _s(18))
-        draw.text((text_x, y0 + _s(36)), f"от {from_name}", font=sub_font, fill=(147, 197, 253))
-        msg = str(gift.get("message") or "").strip()
-        if msg:
-            draw.text((text_x, y0 + _s(54)), _trim(msg, sub_font, text_w), font=sub_font, fill=(203, 213, 225))
-        # Бейдж-«сертификат»: номер NFT/токена или подпись Telegram
-        badge = gift.get("badge")
-        if badge is None:
-            badge = f"#{gift.get('token_id', 0)}"
-        if str(badge).strip():
-            draw.text((text_x, y0 + _s(72)), _trim(str(badge), sub_font, text_w),
-                      font=sub_font, fill=(120, 140, 170))
-
-    if len(gifts) > len(shown):
-        draw.text((SW / 2 - _s(30), base_y + card_h + _s(22)),
-                  f"ещё +{len(gifts) - len(shown)}", font=sub_font, fill=(253, 224, 71))
-
-
 def _draw_crowd(img: Image.Image, draw: ImageDraw.ImageDraw, members: list[dict], count: int):
     """Человечки под ёлкой: до 16 фигурок + бейдж «+N»."""
     if count <= 0:
@@ -1004,7 +1117,6 @@ def generate_tree_image(
     decorations: list[dict],
     title: str = "Новогодняя ёлка",
     members: list[dict] | None = None,
-    gifts: list[dict] | None = None,
 ) -> bytes:
     """PNG открытки: текстурированная ёлка, объёмные игрушки и человечки-участники."""
     img = Image.new("RGBA", (SW, SH), BG_TOP + (255,))
@@ -1024,8 +1136,7 @@ def generate_tree_image(
         fn = DRAWERS.get(otype, _draw_ball)
         fn(img, draw, x, y, color_hex)
 
-    _draw_snowfall(draw)
-    _draw_nft_gifts(img, draw, gifts or [])
+    _draw_snowfall(img, draw)
     _draw_crowd(img, draw, members or [], len(members or []))
 
     out = img.convert("RGB").resize((W, H), Image.LANCZOS)

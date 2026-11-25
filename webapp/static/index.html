@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Новогодняя ёлка 🎄</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=11">
+<link rel="stylesheet" href="/static/style.css?v=12">
 </head>
 <body>
 <canvas id="bgCanvas"></canvas>
@@ -271,27 +271,6 @@
       <p class="wish-hint">Напиши тёплое пожелание — оно появится на игрушке, и любой сможет прочитать его, нажав на игрушку.</p>
     </div>
 
-    <!-- Итоговая открытка: живое превью -->
-    <div id="postcardPanel" class="postcard-panel glass-panel">
-      <div class="postcard-head">
-        <div>
-          <div class="postcard-title">🖼 Итоговая открытка</div>
-          <div id="postcardSubtitle" class="postcard-sub">Так ёлка будет выглядеть в финале 1 января</div>
-        </div>
-        <button id="postcardRefreshBtn" class="postcard-refresh" type="button" title="Обновить">🔄</button>
-      </div>
-      <div class="postcard-frame" id="postcardFrame">
-        <div id="postcardSkeleton" class="postcard-skeleton">Собираем открытку…</div>
-        <img id="postcardImg" class="postcard-img" alt="Итоговая открытка с ёлкой" />
-      </div>
-      <div id="postcardGifts" class="postcard-gifts"></div>
-      <div class="postcard-actions">
-        <button id="postcardDownloadBtn" class="postcard-btn" type="button">⬇️ Скачать PNG</button>
-        <button id="postcardShareBtn" class="postcard-btn" type="button">📤 Поделиться</button>
-        <button id="postcardOpenBtn" class="postcard-btn ghost" type="button">🔍 Во весь экран</button>
-        <button id="postcardGiftBtn" class="postcard-btn gift" type="button">🎁 NFT-подарок</button>
-      </div>
-    </div>
   </section>
 
   <!-- ВКЛАДКА 2: ЛИДЕРБОРД -->
@@ -417,57 +396,6 @@
     </div>
   </div>
 
-  <!-- Модалка открытки -->
-  <div id="previewModal" class="modal hidden">
-    <div class="modal-card glass-panel postcard-modal-card">
-      <div class="modal-header">
-        <span>🎄 Открытка для чата (1 января)</span>
-        <button id="closeModalBtn" class="close-btn" type="button">✕</button>
-      </div>
-      <img id="previewImg" alt="Итоговая ёлка" />
-      <div id="previewGifts" class="postcard-gifts"></div>
-      <div class="postcard-actions">
-        <button id="previewDownloadBtn" class="postcard-btn" type="button">⬇️ Скачать PNG</button>
-        <button id="previewShareBtn" class="postcard-btn" type="button">📤 Поделиться</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Модалка отправки NFT-подарка -->
-  <div id="nftGiftModal" class="modal hidden">
-    <div class="modal-card glass-panel">
-      <div class="modal-header">
-        <span>🎁 Подарки на ёлке</span>
-        <button id="closeNftGiftModalBtn" class="close-btn" type="button">✕</button>
-      </div>
-      <div class="gift-tabs">
-        <button class="gift-tab active" type="button" data-gift-tab="telegram">💎 Мои Telegram-подарки</button>
-        <button class="gift-tab" type="button" data-gift-tab="game">🎮 Подарить внутри игры</button>
-      </div>
-      <div class="nft-body">
-        <div id="giftPanelTelegram">
-          <p class="field-desc">Твои реальные подарки из Telegram — обычные и NFT. Выбери подарок, и он появится на полке у подножия ёлки на открытке.</p>
-          <div id="tgGiftsList" class="nft-catalog tg-gifts-list"></div>
-          <label class="field-label">Подпись на открытке (необязательно):</label>
-          <input id="tgGiftMessageInput" class="text-input" type="text" placeholder="Этот подарок — мой!" maxlength="120" />
-          <p class="nft-hint">Подарок остаётся твоим: мы показываем его на ёлке, но никуда не передаём и не выводим из Telegram.</p>
-        </div>
-        <div id="giftPanelGame" class="hidden">
-          <p class="field-desc">Внутриигровой подарок появится карточкой на открытке друга.</p>
-          <label class="field-label">Кому подарить (ID игрока или имя друга из команды):</label>
-          <div id="nftToOptions" class="nft-to-options"></div>
-          <input id="nftToInput" class="text-input" type="number" placeholder="ID друга (число)" />
-          <label class="field-label">Выбери подарок:</label>
-          <div id="nftCatalog" class="nft-catalog"></div>
-          <label class="field-label">Пожелание на открытке:</label>
-          <input id="nftMessageInput" class="text-input" type="text" placeholder="С Новым годом!" maxlength="120" />
-          <button id="sendNftGiftBtn" class="primary-btn" type="button" style="width:100%;">🎁 Прикрепить к открытке</button>
-          <p class="nft-hint">Подарок рисуется на полке у подножия ёлки в итоговой картинке.</p>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <!-- Модалка Адвент-календаря -->
   <div id="adventModal" class="modal hidden">
     <div class="modal-card glass-panel">
@@ -547,6 +475,6 @@
 
   <div id="toast" class="toast"></div>
 </div>
-<script src="/static/app.js?v=11"></script>
+<script src="/static/app.js?v=12"></script>
 </body>
 </html>
