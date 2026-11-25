@@ -3,7 +3,18 @@ import random
 import secrets
 import aiosqlite
 from datetime import datetime, timedelta, timezone
-from config import DATABASE_PATH, DONATE_PACKS, LOOTBOX_PRICE, ORNAMENTS, TREE_THEMES
+from config import (
+    DATABASE_PATH,
+    DONATE_PACKS,
+    LEGACY_SHARED_TREE_ID,
+    LOOTBOX_PRICE,
+    ORNAMENTS,
+    PERSONAL_TREE_BASE,
+    TREE_THEMES,
+    is_personal_tree_id,
+    personal_tree_id,
+    personal_tree_owner,
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS trees (
@@ -94,30 +105,52 @@ async def init_db():
             except Exception:
                 pass
         await db.execute("UPDATE users SET coin_turnover = coins WHERE coin_turnover < coins")
+        # Миграция v8: старая «общая» ёлка (chat_id = 1) и все групповые ёлки
+        # (chat_id > 1) больше не существуют — у каждого игрока своя ёлка.
         await db.execute(
-            "INSERT OR IGNORE INTO trees (chat_id, chat_title, created_at, is_team) VALUES (1, 'Общая новогодняя ёлка', ?, 0)",
-            (datetime.now(timezone.utc).isoformat(),),
+            "UPDATE decorations SET chat_id = ? WHERE chat_id = ? OR chat_id > 1",
+            (-PERSONAL_TREE_BASE - 1, LEGACY_SHARED_TREE_ID),
         )
-        await db.execute("UPDATE decorations SET chat_id = 1 WHERE chat_id > 1")
+        await db.execute("DELETE FROM decorations WHERE chat_id > 1")
+        await db.execute("DELETE FROM trees WHERE chat_id = ? OR chat_id > 1", (LEGACY_SHARED_TREE_ID,))
         await db.commit()
 
 
 async def get_or_create_tree(chat_id: int, chat_title: str = "", is_team: int = 0) -> dict:
     now = datetime.now(timezone.utc).isoformat()
+    chat_id = int(chat_id)
+    personal = is_personal_tree_id(chat_id)
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT * FROM trees WHERE chat_id = ?", (chat_id,))
         row = await cur.fetchone()
         if row:
             return dict(row)
-        invite_code = f"team_{secrets.token_hex(4)}" if (is_team or chat_id < 0) else None
+        team_flag = 0 if personal else 1
+        invite_code = None if personal else f"team_{secrets.token_hex(4)}"
         await db.execute(
             "INSERT INTO trees (chat_id, chat_title, created_at, is_team, invite_code) VALUES (?, ?, ?, ?, ?)",
-            (chat_id, chat_title, now, 1 if (is_team or chat_id < 0) else 0, invite_code),
+            (chat_id, chat_title, now, team_flag, invite_code),
         )
         await db.commit()
         cur = await db.execute("SELECT * FROM trees WHERE chat_id = ?", (chat_id,))
         return dict(await cur.fetchone())
+
+
+async def get_or_create_personal_tree(user_id: int, first_name: str = "") -> dict:
+    """Личная ёлка игрока — отдельная от всех и недоступная по приглашению."""
+    user = await upsert_user(user_id, first_name=first_name or "")
+    name = (first_name or user.get("first_name") or "").strip()[:32]
+    title = f"Ёлка {name}" if name and name != "Участник" else "Моя новогодняя ёлка"
+    tree = await get_or_create_tree(personal_tree_id(user_id), title)
+    if first_name and tree.get("chat_title") != title:
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            await db.execute(
+                "UPDATE trees SET chat_title = ? WHERE chat_id = ?", (title, personal_tree_id(user_id))
+            )
+            await db.commit()
+        tree["chat_title"] = title
+    return tree
 
 
 async def get_tree(chat_id: int):
@@ -132,6 +165,11 @@ async def create_team_tree(owner_id: int, title: str) -> dict:
     """Создаёт новую командную ёлку и возвращает её данные вместе с invite_code."""
     now = datetime.now(timezone.utc).isoformat()
     clean_title = (title or "Командная ёлка друзей").strip()[:48]
+    existing = await get_owned_team_tree(owner_id)
+    if existing:
+        # У игрока уже есть своя команда — второй раз ссылку не генерируем,
+        # иначе друзья разбредутся по разным ёлкам.
+        return existing
     invite_code = f"team_{secrets.token_hex(4)}"
     # Отрицательный ID для командной ёлки
     team_chat_id = -(900000000 + secrets.randbelow(90000000))
@@ -151,6 +189,56 @@ async def create_team_tree(owner_id: int, title: str) -> dict:
         await db.commit()
         cur = await db.execute("SELECT * FROM trees WHERE chat_id = ?", (team_chat_id,))
         return dict(await cur.fetchone())
+
+
+async def get_owned_team_tree(owner_id: int) -> dict | None:
+    """Командная ёлка, созданная этим игроком (не более одной на игрока)."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM trees WHERE owner_id = ? AND chat_id < 0 AND chat_id > ? ORDER BY created_at ASC LIMIT 1",
+            (owner_id, -PERSONAL_TREE_BASE),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def get_tree_members(chat_id: int) -> list[dict]:
+    """Участники командной ёлки (для человечков под ёлкой)."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT tm.user_id,
+                   COALESCE(u.first_name, 'Участник') AS first_name,
+                   COALESCE(u.username, '') AS username,
+                   tm.joined_at
+            FROM team_members tm
+            LEFT JOIN users u ON u.user_id = tm.user_id
+            WHERE tm.chat_id = ?
+            ORDER BY tm.joined_at ASC
+            """,
+            (chat_id,),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def get_member_count(chat_id: int) -> int:
+    """Сколько человек участвует в этой ёлке (личная = 1, группа/команда = участники)."""
+    chat_id = int(chat_id)
+    if is_personal_tree_id(chat_id):
+        return 1
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cur = await db.execute(
+            "SELECT COUNT(*) AS cnt FROM team_members WHERE chat_id = ?", (chat_id,)
+        )
+        row = await cur.fetchone()
+        owner_cnt = int(row[0]) if row else 0
+    if owner_cnt <= 0:
+        tree = await get_tree(chat_id)
+        owner_cnt = 1 if (tree and tree.get("owner_id")) else 0
+    return max(0, owner_cnt)
 
 
 async def get_tree_by_invite_code(invite_code: str) -> dict | None:
@@ -178,7 +266,8 @@ async def get_tree_by_invite_code(invite_code: str) -> dict | None:
 
 
 async def add_team_member(chat_id: int, user_id: int):
-    if chat_id == 1:
+    # Личные ёлки не принимают участников — только командные и групповые.
+    if is_personal_tree_id(chat_id) or int(chat_id) >= 0:
         return
     now = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -599,7 +688,7 @@ async def add_decoration(
     now = datetime.now(timezone.utc).isoformat()
     clean_wish = (wish_text or "").strip()[:120]
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        if chat_id < 0:
+        if chat_id < 0 and not is_personal_tree_id(chat_id):
             await db.execute(
                 "INSERT OR IGNORE INTO team_members (chat_id, user_id, joined_at) VALUES (?, ?, ?)",
                 (chat_id, user_id, now),
@@ -767,11 +856,12 @@ async def get_team_trees_leaderboard() -> list[dict]:
             FROM trees t
             LEFT JOIN decorations d ON d.chat_id = t.chat_id
             LEFT JOIN team_members tm ON tm.chat_id = t.chat_id
-            WHERE t.is_team = 1 OR t.chat_id < 0
+            WHERE t.chat_id < 0 AND t.chat_id > ?
             GROUP BY t.chat_id
             ORDER BY count DESC, members_count DESC, t.created_at ASC
             LIMIT 50
-            """
+            """,
+            (-PERSONAL_TREE_BASE,),
         )
         rows = await cur.fetchall()
         return [dict(r) for r in rows]

@@ -6,7 +6,12 @@ if (tg) {
 
 const params = new URLSearchParams(window.location.search);
 const rawUrlChat = params.get("chat_id") || params.get("startapp") || tg?.initDataUnsafe?.start_param || "";
-const urlInviteCode = params.get("invite") || (String(rawUrlChat).startsWith("team_") ? String(rawUrlChat) : "");
+const urlInviteCode =
+  params.get("invite") ||
+  (String(rawUrlChat).startsWith("team_") ? String(rawUrlChat) : "") ||
+  (String(tg?.initDataUnsafe?.start_param || params.get("startapp") || "").startsWith("team_")
+    ? String(tg?.initDataUnsafe?.start_param || params.get("startapp") || "")
+    : "");
 // Рефералка: ?ref=12345 или /start ref_12345
 let urlReferrerId = Number(params.get("ref") || params.get("referrer_id") || 0);
 if (!urlReferrerId) {
@@ -18,13 +23,29 @@ if (!urlReferrerId) {
 }
 // (проверка «не сам на себя» — после определения currentUser ниже)
 
+// Личная ёлка игрока: id вида -(PERSONAL_TREE_BASE + user_id) приходит с сервера.
+// До первой загрузки используем виртуальный "personal" и открываем личную ёлку.
+const PERSONAL_TREE_BASE = 4000000000000000;
+
 function normalizeChatId(val) {
   const n = Number(val);
   if (!Number.isNaN(n) && n < 0) return String(n);
-  return "1";
+  return "personal";
+}
+
+function personalTreeIdLocal() {
+  if (state && state.personalTreeId) return String(state.personalTreeId);
+  const uid = Number(currentUser?.id || tg?.initDataUnsafe?.user?.id || 1);
+  return String(-(PERSONAL_TREE_BASE + uid));
+}
+
+// chat_id для запросов: "personal" превращается в реальный id личной ёлки
+function requestChatId() {
+  return String(chatId) === "personal" ? personalTreeIdLocal() : String(chatId);
 }
 
 let chatId = normalizeChatId(rawUrlChat);
+if (String(chatId) === "personal") chatId = "personal";
 const initData = tg?.initData || "";
 
 function getPersistentUser() {
@@ -53,13 +74,12 @@ function getPersistentUser() {
 
 const currentUser = getPersistentUser();
 if (urlReferrerId && urlReferrerId === Number(currentUser.id)) urlReferrerId = 0;
-const BACKUP_KEY = `ny_backup_v7_${currentUser.id}`;
+const BACKUP_KEY = `ny_backup_v8_${currentUser.id}`;
 
 let state = {
   tree: null,
   ornaments: {},
   donatePacks: {},
-  gramWallet: "",
   botUsername: "",
   webappUrl: window.location.origin,
   selectedType: "ball",
@@ -89,12 +109,17 @@ let state = {
   referralsCount: 0,
   styleDraft: { bg_theme: "aurora", garland_style: "classic", topper_type: "star" },
   activeOrnament: null,
+  isPersonalTree: true,
+  members: [],
+  membersCount: 1,
+  teamTree: null,
+  personalTreeId: 0,
+  crowdAnimated: false,
 };
 
 let dragState = null;
 let suppressNextTreeClick = false;
 let clickFlushTimer = null;
-let gramAutoTimer = null;
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
@@ -363,9 +388,11 @@ function loadLocalBackup() {
   try {
     const raw = localStorage.getItem(BACKUP_KEY);
     if (raw) return JSON.parse(raw);
-    // Миграция со старого ключа v6
-    const oldRaw = localStorage.getItem(`ny_backup_v6_${currentUser.id}`);
-    if (oldRaw) return JSON.parse(oldRaw);
+    // Миграция со старых ключей v6/v7
+    for (const oldKey of [`ny_backup_v7_${currentUser.id}`, `ny_backup_v6_${currentUser.id}`]) {
+      const oldRaw = localStorage.getItem(oldKey);
+      if (oldRaw) return JSON.parse(oldRaw);
+    }
   } catch (e) {}
   return null;
 }
@@ -404,7 +431,7 @@ $("#refreshLbBtn").addEventListener("click", async () => {
 
 async function fetchLeaderboardOnly(showToast = false) {
   try {
-    const res = await fetch(`/api/leaderboard?chat_id=${chatId}&t=${Date.now()}`, { cache: "no-store" });
+    const res = await fetch(`/api/leaderboard?chat_id=${requestChatId()}&user_id=${currentUser.id}&t=${Date.now()}`, { cache: "no-store" });
     if (!res.ok) return;
     const data = await res.json();
     state.stats = data.chat_stats || state.stats;
@@ -480,7 +507,7 @@ function updateHeaderAndClickerUI() {
 }
 
 // ============================================================================
-// 6. КОМАНДНЫЕ ЁЛКИ С ДРУЗЬЯМИ ПО ССЫЛКЕ
+// 6. ЛИЧНАЯ ЁЛКА И КОМАНДА ПО ССЫЛКЕ ОТ БОТА
 // ============================================================================
 function getInviteLinkForTree(treeObj) {
   if (!treeObj) return window.location.origin;
@@ -488,121 +515,188 @@ function getInviteLinkForTree(treeObj) {
   if (state.botUsername) {
     return `https://t.me/${state.botUsername}?start=${code}`;
   }
-  return `${window.location.origin}/?chat_id=${treeObj.chat_id}&invite=${code}`;
+  return `${window.location.origin}/?invite=${code}`;
 }
 
 function renderTreeSwitcher() {
   const sel = $("#treeSwitcher");
   if (!sel) return;
-  const currentVal = String(chatId);
-  sel.innerHTML = `<option value="1">🌍 Общая новогодняя ёлка</option>`;
+  sel.innerHTML = "";
 
-  const seen = new Set(["1"]);
-  const list = [...(state.teamTrees || [])];
-  if (state.tree && Number(state.tree.chat_id) < 0 && !list.some((t) => String(t.chat_id) === String(state.tree.chat_id))) {
-    list.unshift(state.tree);
+  const personalOpt = document.createElement("option");
+  personalOpt.value = personalTreeIdLocal();
+  personalOpt.textContent = "🎄 Моя ёлка";
+  sel.appendChild(personalOpt);
+
+  const teams = [...(state.teamTrees || [])];
+  if (state.teamTree && !teams.some((t) => String(t.chat_id) === String(state.teamTree.chat_id))) {
+    teams.unshift(state.teamTree);
   }
-
-  for (const t of list) {
+  if (state.tree && Number(state.tree.chat_id) < 0 && !teams.some((t) => String(t.chat_id) === String(state.tree.chat_id))) {
+    teams.unshift(state.tree);
+  }
+  const seen = new Set([personalTreeIdLocal()]);
+  for (const t of teams) {
     const cidStr = String(t.chat_id);
     if (seen.has(cidStr)) continue;
     seen.add(cidStr);
-    const opt = document.createElement("option");
-    opt.value = cidStr;
-    opt.textContent = `👥 ${t.chat_title || "Командная ёлка"}`;
-    sel.appendChild(opt);
+    const teamOpt = document.createElement("option");
+    teamOpt.value = cidStr;
+    teamOpt.textContent = `👥 ${t.chat_title || "Командная ёлка"}`;
+    sel.appendChild(teamOpt);
   }
-  sel.value = seen.has(currentVal) ? currentVal : "1";
 
-  // Показываем панель быстрого приглашения друзей, если выбрана командная ёлка
+  const currentVal = String(chatId);
+  const values = [...sel.options].map((o) => o.value);
+  sel.value = values.includes(currentVal) ? currentVal : values[0];
+
+  // Панель команды под переключателем
   const shareRow = $("#teamShareRow");
-  if (Number(chatId) < 0 && state.tree) {
-    shareRow.classList.remove("hidden");
+  const isTeam = !state.isPersonalTree && Number(chatId) < 0;
+  if (shareRow) shareRow.classList.toggle("hidden", !isTeam);
+  if (isTeam && state.tree) {
     const code = state.tree.invite_code || `team_${state.tree.chat_id}`;
-    $("#teamCodeLabel").textContent = `Код команды: ${code}`;
-  } else {
-    shareRow.classList.add("hidden");
+    $("#teamCodeLabel").textContent = `👥 Участников: ${state.membersCount}`;
+    const link = getInviteLinkForTree(state.tree);
+    const codeEl = $("#teamCodeLabel");
+    if (codeEl) codeEl.dataset.code = code;
+    if (codeEl) codeEl.dataset.link = link;
   }
+  const btn = $("#inviteTeamBtn");
+  if (btn) btn.textContent = state.teamTree ? "👥 Пригласить друга" : "👥 Позвать друзей";
 }
 
-$("#treeSwitcher").addEventListener("change", async (e) => {
-  chatId = e.target.value;
+function renderCrowd() {
+  const row = $("#crowdRow");
+  if (!row) return;
+  row.innerHTML = "";
+  const count = Math.max(0, Number(state.membersCount || 0));
+  const members = Array.isArray(state.members) ? state.members : [];
+  const isTeam = !state.isPersonalTree;
+
+  const shown = Math.min(count, 13);
+  for (let i = 0; i < shown; i++) {
+    const m = members[i] || {};
+    const isMe = Number(m.user_id) === Number(state.myUserId);
+    const figure = document.createElement("div");
+    figure.className = "crowd-figure" + (isMe ? " is-me" : "");
+    figure.style.animationDelay = `${(i * 0.08).toFixed(2)}s`;
+    const hatHue = Number(m.user_id || i * 37) % 360;
+    figure.innerHTML = `
+      <div class="crowd-person hat-hue-${(Number(m.user_id || 0) % 6 + 6) % 6}">
+        <div class="person-hat"></div>
+        <div class="person-head"></div>
+        <div class="person-body"></div>
+      </div>
+      <div class="crowd-name">${escapeHtml((m.first_name || (isMe ? "Ты" : "Друг")).slice(0, 10))}</div>
+    `;
+    row.appendChild(figure);
+  }
+  if (count > shown) {
+    const more = document.createElement("div");
+    more.className = "crowd-figure crowd-more";
+    more.innerHTML = `<div class="crowd-badge">+${count - shown}</div>`;
+    row.appendChild(more);
+  }
+
+  $("#crowdTitle").textContent = isTeam
+    ? `👥 Ёлку собирают: ${count} ${count === 1 ? "человек" : "чел."}`
+    : "🎄 Наряжаешь один";
+  $("#crowdHint").textContent = isTeam
+    ? (count > 1
+        ? "Это ваша общая ёлка: игрушки и монеты у каждого свои, а ёлка одна на всех 🎁"
+        : "Пока в команде только ты. Нажми «Пригласить друга» — бот сгенерирует ссылку 🎄")
+    : "Пока ты играешь один — ёлка только твоя. Позови друга, и появятся человечки в шапочках 👇";
+  const inviteBtn = $("#crowdInviteBtn");
+  if (inviteBtn) inviteBtn.textContent = state.teamTree ? "+ Пригласить друга" : "+ Позвать друзей";
+}
+
+function switchChat(newChatId) {
+  chatId = String(newChatId);
   haptic("light");
-  await refreshTreeData();
+  return refreshTreeData();
+}
+
+$("#treeSwitcher").addEventListener("change", (e) => {
+  switchChat(e.target.value).catch(() => toast("Не удалось открыть ёлку", true));
 });
 
-$("#openTeamModalBtn").addEventListener("click", () => {
+function openTeamModal() {
   $("#createdInviteBox").classList.add("hidden");
+  const label = $("#teamMembersLabel");
+  const ownCount = state.isPersonalTree ? 1 : Math.max(1, Number(state.membersCount || 1));
+  if (label) label.textContent = `Участников: ${ownCount}`;
   $("#teamModal").classList.remove("hidden");
-});
+}
+
+$("#inviteTeamBtn").addEventListener("click", openTeamModal);
+$("#crowdInviteBtn").addEventListener("click", openTeamModal);
 
 $("#closeTeamModalBtn").addEventListener("click", () => {
   $("#teamModal").classList.add("hidden");
 });
+$("#teamModal").addEventListener("click", (e) => {
+  if (e.target === $("#teamModal")) $("#teamModal").classList.add("hidden");
+});
 
 $("#createTeamBtn").addEventListener("click", async () => {
-  const title = ($("#teamNameInput").value || "").trim();
-  if (title.length < 2) {
-    toast("Введи название ёлки (минимум 2 символа)", true);
-    return;
-  }
   try {
     const res = await fetch("/api/team/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title,
-        init_data: initData,
-        user: currentUser,
-      }),
+      body: JSON.stringify({ title: "", init_data: initData, user: currentUser }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Ошибка создания");
     haptic("heavy");
-    chatId = String(data.tree.chat_id);
+    state.teamTree = data.tree;
     if (data.profile) applyProfile(data.profile);
-    await refreshTreeData();
-
-    const inviteUrl = data.bot_invite_url || getInviteLinkForTree(data.tree);
-    $("#teamInviteLinkCode").textContent = inviteUrl;
+    $("#teamInviteLinkCode").textContent = data.bot_invite_url || getInviteLinkForTree(data.tree);
     $("#createdInviteBox").classList.remove("hidden");
-    toast(`Командная ёлка «${data.tree.chat_title}» создана! 🎉`);
+    const label = $("#teamMembersLabel");
+    if (label) label.textContent = `Участников: ${Math.max(1, Number(data.members_count || 1))}`;
+    await switchChat(data.tree_id || data.tree.chat_id);
+    toast("Ссылка-приглашение готова! Отправь её другу 🎄");
   } catch (err) {
-    toast(err.message || "Не удалось создать", true);
+    toast(err.message || "Не удалось создать команду", true);
   }
 });
 
+function extractInviteCode(raw) {
+  let code = String(raw || "").trim();
+  if (code.includes("start=")) code = code.split("start=")[1];
+  if (code.includes("invite=")) code = code.split("invite=")[1];
+  return code.split("&")[0].split("?")[0].trim();
+}
+
 $("#joinTeamBtn").addEventListener("click", async () => {
-  const code = ($("#joinCodeInput").value || "").trim();
+  const code = extractInviteCode($("#joinCodeInput").value || "");
   if (!code) {
-    toast("Введи код или ссылку приглашения", true);
+    toast("Вставь ссылку-приглашение или код", true);
     return;
   }
   try {
     const res = await fetch("/api/team/join", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        invite_code: code,
-        init_data: initData,
-        user: currentUser,
-      }),
+      body: JSON.stringify({ invite_code: code, init_data: initData, user: currentUser }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Ёлка не найдена");
     haptic("medium");
-    chatId = String(data.tree.chat_id);
+    state.teamTree = data.tree;
     if (data.profile) applyProfile(data.profile);
     $("#teamModal").classList.add("hidden");
-    await refreshTreeData();
-    toast(`Ты присоединился к «${data.tree.chat_title}»! 🎄`);
+    $("#joinCodeInput").value = "";
+    await switchChat(data.tree_id || data.tree.chat_id);
+    toast(`Ты в команде «${data.tree.chat_title}»! 👥`);
   } catch (err) {
-    toast(err.message || "Код не найден", true);
+    toast(err.message || "Ссылка не найдена", true);
   }
 });
 
 function shareCurrentTeamTree(inviteUrl, treeTitle) {
-  const text = `🎄 Заходи наряжать нашу командную новогоднюю ёлку «${treeTitle || "Друзья"}»!`;
+  const text = `🎄 Заходи наряжать нашу общую новогоднюю ёлку «${treeTitle || "Друзья"}»! Жми на ссылку — бот всё откроет сам.`;
   const shareLink = `https://t.me/share/url?url=${encodeURIComponent(inviteUrl)}&text=${encodeURIComponent(text)}`;
   if (tg?.openTelegramLink) {
     tg.openTelegramLink(shareLink);
@@ -612,8 +706,9 @@ function shareCurrentTeamTree(inviteUrl, treeTitle) {
 }
 
 $("#copyTeamLinkBtn").addEventListener("click", () => {
-  navigator.clipboard?.writeText($("#teamInviteLinkCode").textContent || "");
-  toast("Ссылка приглашения скопирована! 📋");
+  const link = $("#teamInviteLinkCode").textContent || getInviteLinkForTree(state.tree);
+  navigator.clipboard?.writeText(link);
+  toast("Ссылка-приглашение скопирована! 📋");
 });
 
 $("#tgShareTeamBtn").addEventListener("click", () => {
@@ -621,12 +716,17 @@ $("#tgShareTeamBtn").addEventListener("click", () => {
   shareCurrentTeamTree(link, state.tree?.chat_title);
 });
 
-$("#shareTeamBtn").addEventListener("click", () => {
-  const link = getInviteLinkForTree(state.tree);
-  $("#teamInviteLinkCode").textContent = link;
-  $("#createdInviteBox").classList.remove("hidden");
-  $("#teamModal").classList.remove("hidden");
+$("#shareTeamBtn").addEventListener("click", async () => {
+  const link = ($("#teamCodeLabel")?.dataset?.link) || getInviteLinkForTree(state.tree);
+  try {
+    await navigator.clipboard.writeText(link);
+    toast("Ссылка скопирована! Отправь её другу 🎄");
+  } catch (e) {
+    toast(link);
+  }
 });
+
+$("#joinByCodeBtn").addEventListener("click", () => openTeamModal());
 
 // ============================================================================
 // 7. ОТРИСОВКА ЁЛКИ, ГИРЛЯНДЫ И ИГРУШЕК
@@ -1048,7 +1148,7 @@ function escapeHtml(s) {
 }
 
 // ============================================================================
-// 9. ИНВЕНТАРЬ, МАГАЗИН И ДОНАТ (С АВТОВЫДАЧЕЙ GRAM СРАЗУ ПОСЛЕ ОПЛАТЫ)
+// 9. ИНВЕНТАРЬ, МАГАЗИН И ДОНАТ (TELEGRAM STARS)
 // ============================================================================
 function renderPalette() {
   palette.innerHTML = "";
@@ -1142,17 +1242,13 @@ function renderDonateShop() {
           <p>${escapeHtml(pack.description)}</p>
         </div>
       </div>
-      <div class="donate-btns">
+      <div class="donate-btns donate-btns-single">
         <button type="button" class="pay-stars-btn" data-pack="${packId}">
           ⭐️ ${pack.stars_price} Stars
-        </button>
-        <button type="button" class="pay-gram-btn" data-pack="${packId}">
-          💎 ${pack.gram_price} GRAM
         </button>
       </div>
     `;
     card.querySelector(".pay-stars-btn").addEventListener("click", () => buyWithStars(packId));
-    card.querySelector(".pay-gram-btn").addEventListener("click", () => openGramModal(packId));
     list.appendChild(card);
   }
 }
@@ -1251,7 +1347,7 @@ async function saveTreeStyle() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chat_id: Number(chatId),
+        chat_id: Number(requestChatId()),
         bg_theme: state.styleDraft.bg_theme,
         garland_style: state.styleDraft.garland_style,
         topper_type: state.styleDraft.topper_type,
@@ -1395,108 +1491,6 @@ async function buyWithStars(packId) {
   }
 }
 
-async function openGramModal(packId) {
-  const pack = state.donatePacks[packId];
-  if (!pack) return;
-  clearTimeout(gramAutoTimer);
-  $("#gramAutoStatus").classList.add("hidden");
-
-  try {
-    const res = await fetch("/api/donate/gram-order", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        pack_id: packId,
-        currency: "GRAM",
-        init_data: initData,
-        user: currentUser,
-      }),
-    });
-    const orderData = await res.json();
-    if (!res.ok) throw new Error(orderData.detail || "Ошибка создания заказа");
-
-    state.activeGramOrder = {
-      packId,
-      orderId: orderData.order_id,
-      memo: orderData.memo,
-      price: orderData.gram_price,
-      paidInitiated: false,
-    };
-
-    $("#gramModalTitle").textContent = `💎 ${pack.title}`;
-    $("#gramPackDesc").textContent = pack.description;
-    $("#gramAmountText").textContent = `${orderData.gram_price} GRAM`;
-    $("#gramWalletCode").textContent = orderData.wallet || state.gramWallet;
-    $("#gramMemoCode").textContent = orderData.memo;
-    const wallet = encodeURIComponent(orderData.wallet || state.gramWallet || "");
-    $("#gramDeepLink").href = `https://app.tonkeeper.com/transfer/${wallet}?text=${encodeURIComponent(orderData.memo)}`;
-    $("#gramModal").classList.remove("hidden");
-  } catch (err) {
-    toast(err.message || "Ошибка создания заказа GRAM", true);
-  }
-}
-
-// Автовыдача GRAM сразу после перехода к оплате / возврата из кошелька
-$("#gramDeepLink").addEventListener("click", () => {
-  if (!state.activeGramOrder) return;
-  state.activeGramOrder.paidInitiated = true;
-  $("#gramAutoStatus").classList.remove("hidden");
-  $("#gramAutoStatusText").textContent = "Проверка оплаты в сети... Набор выдастся автоматически!";
-
-  clearTimeout(gramAutoTimer);
-  gramAutoTimer = setTimeout(async () => {
-    if (state.activeGramOrder && state.activeGramOrder.paidInitiated) {
-      const ord = state.activeGramOrder;
-      state.activeGramOrder = null;
-      await claimDonateReward(ord.packId, "GRAM", ord.orderId);
-    }
-  }, 4500);
-});
-
-document.addEventListener("visibilitychange", async () => {
-  if (document.visibilityState === "visible" && state.activeGramOrder && state.activeGramOrder.paidInitiated) {
-    clearTimeout(gramAutoTimer);
-    const ord = state.activeGramOrder;
-    state.activeGramOrder = null;
-    await claimDonateReward(ord.packId, "GRAM", ord.orderId);
-  }
-});
-
-async function claimDonateReward(packId, currency, orderId = 0) {
-  try {
-    const res = await fetch("/api/donate/claim", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        pack_id: packId,
-        currency,
-        order_id: orderId,
-        init_data: initData,
-        user: currentUser,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "Ошибка автовыдачи");
-    haptic("heavy");
-    spawnParticles(window.innerWidth / 2, window.innerHeight / 2, "#fde047", 36);
-    applyProfile(data.profile);
-    $("#gramModal").classList.add("hidden");
-    toast(data.message || "Набор автоматически выдан! 🎉");
-  } catch (err) {
-    toast(err.message || "Ошибка автовыдачи", true);
-  }
-}
-
-$("#copyWalletBtn").addEventListener("click", () => {
-  navigator.clipboard?.writeText($("#gramWalletCode").textContent || "");
-  toast("Адрес кошелька скопирован 📋");
-});
-
-$("#closeGramModalBtn").addEventListener("click", () => {
-  clearTimeout(gramAutoTimer);
-  $("#gramModal").classList.add("hidden");
-});
-
 // ============================================================================
 // 10. КЛИКЕР С ОБОРОТОМ МОНЕТ И КОМБО
 // ============================================================================
@@ -1609,16 +1603,23 @@ async function refreshTreeData(inviteOverride = "") {
     t: String(Date.now()),
   });
   if (urlReferrerId) q.set("referrer_id", String(urlReferrerId));
-  const res = await fetch(`/api/tree/${chatId}?${q.toString()}`, { cache: "no-store" });
+  const requestedChat = requestChatId();
+  const res = await fetch(`/api/tree/${requestedChat}?${q.toString()}`, { cache: "no-store" });
   if (!res.ok) throw new Error(await res.text());
   const data = await res.json();
   state.tree = data.tree;
   if (data.tree && data.tree.chat_id) {
     chatId = String(data.tree.chat_id);
   }
+  state.isPersonalTree = data.is_personal_tree !== false;
+  if (data.personal_tree_id) state.personalTreeId = String(data.personal_tree_id);
+  state.members = Array.isArray(data.members) ? data.members : [];
+  state.membersCount = Number(data.members_count || state.members.length || 0);
+  if (data.team_tree !== undefined) {
+    state.teamTree = data.team_tree || null;
+  }
   state.ornaments = data.ornaments;
   state.donatePacks = data.donate_packs || {};
-  state.gramWallet = data.gram_wallet || "";
   state.botUsername = data.bot_username || "";
   state.webappUrl = data.webapp_url || window.location.origin;
   state.treeThemes = data.tree_themes || state.treeThemes;
@@ -1641,6 +1642,7 @@ async function refreshTreeData(inviteOverride = "") {
     $("#hint").textContent = "🎉 Ивент завершён! С Новым годом!";
   }
   renderTreeSwitcher();
+  renderCrowd();
   updateHeaderAndClickerUI();
   updateDailyUI();
   applyTreeTheme();
@@ -1668,7 +1670,7 @@ async function initLoadAndSync() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            chat_id: Number(chatId),
+            chat_id: Number(requestChatId()),
             coins: backup.coins,
             coin_turnover: backup.coin_turnover,
             click_power: backup.click_power,
@@ -1745,7 +1747,7 @@ treeSvg.addEventListener("click", async (e) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chat_id: Number(chatId),
+        chat_id: Number(requestChatId()),
         ornament_type: state.selectedType,
         color: state.selectedColor,
         x: pt.x,
@@ -1772,7 +1774,7 @@ treeSvg.addEventListener("click", async (e) => {
 });
 
 $("#previewBtn").addEventListener("click", () => {
-  $("#previewImg").src = `/api/final-image/${chatId}?t=${Date.now()}`;
+  $("#previewImg").src = `/api/final-image/${requestChatId()}?user_id=${currentUser.id}&t=${Date.now()}`;
   $("#previewModal").classList.remove("hidden");
 });
 

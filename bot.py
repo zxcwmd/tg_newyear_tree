@@ -1,4 +1,4 @@
-"""Telegram-бот новогодней ёлки (поддержка Mini App, Telegram Stars и финала 1 января)."""
+"""Telegram-бот новогодней ёлки: личные ёлки, командные приглашения, Mini App и финал 1 января."""
 import asyncio
 import logging
 import random
@@ -19,7 +19,15 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import BOT_TOKEN, DONATE_PACKS, GREETINGS, TIMEZONE, WEBAPP_URL
+from config import (
+    BOT_TOKEN,
+    DONATE_PACKS,
+    GREETINGS,
+    TIMEZONE,
+    WEBAPP_URL,
+    is_personal_tree_id,
+    personal_tree_id,
+)
 import database as db
 from tree_image import generate_tree_image
 
@@ -72,10 +80,20 @@ async def create_stars_invoice_link(user_id: int, pack_id: str, order_id: int) -
 
 
 def webapp_button(chat_id: int, text: str = "🎄 Украсить ёлку") -> InlineKeyboardMarkup:
-    url = f"{WEBAPP_URL}/?chat_id={chat_id}"
+    # Для личной ёлки (chat_id <= 0) Mini App сам откроет ёлку игрока
+    query = f"?chat_id={chat_id}" if int(chat_id) < 0 else ""
+    url = f"{WEBAPP_URL}/{query}"
     kb = InlineKeyboardBuilder()
     kb.button(text=text, web_app=WebAppInfo(url=url))
     return kb.as_markup()
+
+
+async def team_invite_link(code: str) -> str:
+    """Ссылка-приглашение в команду: друг открывает её и попадает на ту же ёлку."""
+    uname = await get_bot_username()
+    if uname:
+        return f"https://t.me/{uname}?start={code}"
+    return f"{WEBAPP_URL}/?invite={code}"
 
 
 def format_stats(stats: list[dict]) -> str:
@@ -139,6 +157,8 @@ async def cmd_start(message: Message):
             pass
     elif start_arg.startswith("team_"):
         team_tree = await db.get_tree_by_invite_code(start_arg)
+        if team_tree and is_personal_tree_id(team_tree["chat_id"]):
+            team_tree = None
         if team_tree:
             await db.add_team_member(team_tree["chat_id"], uid)
             if team_tree.get("owner_id"):
@@ -155,22 +175,28 @@ async def cmd_start(message: Message):
             return
 
     if chat.type == "private":
-        await db.get_or_create_tree(1, "Общая новогодняя ёлка")
+        # У каждого игрока — своя отдельная ёлка
+        await db.get_or_create_personal_tree(uid, message.from_user.first_name if message.from_user else "")
         await message.answer(
             "🎄 Привет! Я — бот новогодней ёлки!\n\n"
-            "• Фарми монеты в кликере 🪙\n"
-            "• Покупай игрушки в магазине 🛍 или за ⭐️ Stars / 💎 GRAM\n"
-            "• Создавай командную ёлку с друзьями по ссылке или украшай общую ёлку до 1 января!\n\n"
-            "Добавь меня в групповой чат или открой ёлку кнопкой ниже 👇\n\n"
+            "• У тебя <b>своя личная ёлка</b> — играешь один и никому не мешаешь\n"
+            "• Фарми монеты в кликере 🪙 и покупай игрушки в магазине 🛍\n"
+            "• Хочешь собрать команду? Нажми «👥 Позвать друзей» — я сгенерирую ссылку, "
+            "отправь её другу, и вы будете украшать <b>одну общую ёлку</b> 🎉\n\n"
             "Команды:\n"
-            "/start — открыть ёлку\n"
-            "/tree — показать текущую ёлку картинкой\n"
+            "/start — открыть свою ёлку\n"
+            "/team — ссылка-приглашение для друзей\n"
+            "/tree — прислать картинку ёлки с участниками\n"
             "/stats — рейтинг игроков\n"
             "/help — помощь",
-            reply_markup=webapp_button(1, "🎄 Открыть Новогоднюю ёлку"),
+            reply_markup=webapp_button(personal_tree_id(uid), "🎄 Открыть мою ёлку"),
         )
+        kb = InlineKeyboardBuilder()
+        kb.button(text="👥 Позвать друзей", callback_data="team_invite")
+        await message.answer("Собираешь команду? Держи кнопку 👇", reply_markup=kb.as_markup())
         return
 
+    # Групповой чат: ёлка на всех участников чата (командная)
     tree = await db.get_or_create_tree(chat.id, chat.title or "")
     if tree.get("is_finished"):
         await message.answer(
@@ -179,29 +205,89 @@ async def cmd_start(message: Message):
         )
         return
 
+    await db.add_team_member(chat.id, uid)
+    join_link = await team_invite_link(tree.get("invite_code") or "")
     await message.answer(
         f"🎄 <b>Новогодняя ёлка чата «{chat.title}» создана!</b>\n\n"
         "Украшайте её вместе с друзьями до 1 января! "
         "Фармите монеты в кликере 🪙, покупайте украшения и вешайте на ёлку 👇\n\n"
-        "1 января я пришлю сюда финальную ёлку с поздравлением и итогами 🎉",
+        f"Ссылка для друзей: {join_link}\n\n"
+        "1 января я пришлю сюда финальную ёлку с человечками-участниками, "
+        "поздравлением и итогами 🎉",
         reply_markup=webapp_button(chat.id),
     )
+
+
+def _team_kb(link: str) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔗 Отправить другу", url=f"https://t.me/share/url?url={link}&text=Давай нарядим новогоднюю ёлку вместе!")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+async def send_team_invite(message: Message, uid: int):
+    """Создаёт (или переиспользует) командную ёлку игрока и присылает ссылку-приглашение."""
+    first_name = message.from_user.first_name if message.from_user else "Друзья"
+    team = await db.create_team_tree(uid, f"Ёлка {first_name}")
+    await db.add_team_member(team["chat_id"], uid)
+    link = await team_invite_link(team.get("invite_code") or "")
+    members = await db.get_member_count(team["chat_id"])
+    await message.answer(
+        "👥 <b>Командная ёлка готова!</b>\n\n"
+        f"Ёлка: «{team.get('chat_title')}»\n"
+        f"Участников: <b>{members}</b>\n\n"
+        "Отправь эту ссылку другу — он откроет бота и попадёт на <b>твою командную ёлку</b>. "
+        "Игрушки и монеты у каждого свои, а ёлка общая 🎄\n\n"
+        f"<code>{link}</code>",
+        reply_markup=_team_kb(link),
+    )
+
+
+@dp.message(Command("team"))
+async def cmd_team(message: Message):
+    chat = message.chat
+    uid = message.from_user.id if message.from_user else 1
+    if chat.type != "private":
+        tree = await db.get_or_create_tree(chat.id, chat.title or "")
+        await db.add_team_member(chat.id, uid)
+        link = await team_invite_link(tree.get("invite_code") or "")
+        await message.answer(
+            f"👥 Это ёлка чата «{chat.title}». Пригласить друзей: {link}\n"
+            "Для личной команды напиши мне в личку /team 🎄"
+        )
+        return
+    await send_team_invite(message, uid)
+
+
+@dp.callback_query(F.data == "team_invite")
+async def cb_team_invite(callback):
+    await callback.answer()
+    uid = callback.from_user.id if callback.from_user else 1
+    if callback.message:
+        await send_team_invite(callback.message, uid)
 
 
 @dp.message(Command("tree"))
 async def cmd_tree(message: Message):
     chat = message.chat
-    target_id = 1 if chat.type == "private" else chat.id
-    target_title = "Общая новогодняя ёлка" if chat.type == "private" else (chat.title or "Новогодняя ёлка")
-    tree = await db.get_tree(target_id)
-    if not tree:
-        tree = await db.get_or_create_tree(target_id, target_title)
+    uid = message.from_user.id if message.from_user else 1
+    if chat.type == "private":
+        target_id = personal_tree_id(uid)
+        tree = await db.get_or_create_personal_tree(uid, message.from_user.first_name if message.from_user else "")
+        target_title = tree.get("chat_title") or "Моя ёлка"
+        members = []
+    else:
+        target_id = chat.id
+        target_title = chat.title or "Новогодняя ёлка"
+        tree = await db.get_tree(target_id) or await db.get_or_create_tree(target_id, target_title)
+        members = await db.get_tree_members(target_id)
     decorations = await db.get_decorations(target_id)
-    png = generate_tree_image(decorations, title=f"Ёлка: {target_title}")
+    png = generate_tree_image(decorations, title=f"Ёлка: {target_title}", members=members)
     photo = BufferedInputFile(png, filename="tree.png")
+    people = f" • участников: <b>{max(1, len(members))}</b> 👥" if members else ""
     await message.answer_photo(
         photo,
-        caption=f"🎄 {target_title} — игрушек на ёлке: <b>{len(decorations)}</b>",
+        caption=f"🎄 {target_title} — игрушек на ёлке: <b>{len(decorations)}</b>{people}",
         reply_markup=webapp_button(target_id),
     )
 
@@ -209,9 +295,15 @@ async def cmd_tree(message: Message):
 @dp.message(Command("stats"))
 async def cmd_stats(message: Message):
     chat = message.chat
-    target_id = 1 if chat.type == "private" else chat.id
-    target_title = "Общая новогодняя ёлка" if chat.type == "private" else (chat.title or "Чат")
-    tree = await db.get_tree(target_id)
+    uid = message.from_user.id if message.from_user else 1
+    if chat.type == "private":
+        target_id = personal_tree_id(uid)
+        tree = await db.get_or_create_personal_tree(uid, message.from_user.first_name if message.from_user else "")
+        target_title = tree.get("chat_title") or "Моя ёлка"
+    else:
+        target_id = chat.id
+        target_title = chat.title or "Чат"
+        tree = await db.get_tree(target_id)
     if not tree:
         await message.answer("Ёлка ещё не создана. Напиши /start 🎄")
         return
@@ -229,14 +321,17 @@ async def cmd_stats(message: Message):
 async def cmd_help(message: Message):
     await message.answer(
         "🎄 <b>Как устроена игра?</b>\n\n"
-        "1. Открой приложение кнопкой «🎄 Украсить ёлку»\n"
+        "1. Открой приложение кнопкой «🎄 Открыть мою ёлку» — у тебя <b>своя личная ёлка</b>\n"
         "2. Во вкладке <b>«🪙 Кликер»</b> фарми монеты и прокачивай силу клика\n"
-        "3. Во вкладке <b>«🛍 Магазин»</b> покупай игрушки за монеты (а в <b>«💎 Донат»</b> — наборы за ⭐️ Stars или 💎 GRAM)\n"
+        "3. Во вкладке <b>«🛍 Магазин»</b> покупай игрушки за монеты (а в <b>«💎 Донат»</b> — наборы за ⭐️ Stars)\n"
         "4. Во вкладке <b>«🎄 Ёлка»</b> выбери купленную игрушку и цвет, затем нажми на ёлку, чтобы повесить её!\n"
-        "5. Свои игрушки можно перетаскивать по ёлке или снимать обратно в инвентарь.\n\n"
+        "5. Хочешь играть с друзьями? Команда <b>/team</b> — бот пришлёт ссылку-приглашение, "
+        "по ней друг попадёт на вашу <b>общую командную ёлку</b> 👥\n"
+        "6. Свои игрушки можно перетаскивать по ёлке или снимать обратно в инвентарь.\n\n"
         "Команды:\n"
-        "/start — открыть ёлку\n"
-        "/tree — прислать картинку ёлки в чат\n"
+        "/start — открыть свою ёлку\n"
+        "/team — ссылка для друзей (командная ёлка)\n"
+        "/tree — прислать картинку ёлки с участниками\n"
         "/stats — рейтинг участников\n"
         "/finish — подвести итоги досрочно"
     )
@@ -261,11 +356,13 @@ async def finish_tree(bot: Bot, chat_id: int, chat_title: str):
     await db.mark_tree_finished(chat_id)
     decorations = await db.get_decorations(chat_id)
     stats = await db.get_stats(chat_id)
-    png = generate_tree_image(decorations, title=f"Ёлка: {chat_title}")
+    members = await db.get_tree_members(chat_id)
+    png = generate_tree_image(decorations, title=f"Ёлка: {chat_title}", members=members)
     greeting = random.choice(GREETINGS)
     caption = (
         f"{greeting}\n\n"
-        f"🎄 Ёлка «{chat_title}» — всего игрушек: <b>{len(decorations)}</b>\n\n"
+        f"🎄 Ёлка «{chat_title}» — всего игрушек: <b>{len(decorations)}</b>\n"
+        f"👥 Участников: <b>{max(1, len(members))}</b>\n\n"
         f"🏆 <b>Итоги:</b>\n{format_stats(stats)}\n\n"
         f"С Новым годом! 🎉"
     )
