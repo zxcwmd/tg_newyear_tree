@@ -200,6 +200,9 @@ function setTreeSegment(segKey, options = {}) {
   if (vbAnimFrame) return;
   if (!changed && !options.force) return;
 
+  // На время перелёта включаем композитный слой: первый кадр в новом секторе
+  // не «провисает» из-за пересчёта градиентов и фильтров SVG.
+  treeSvg.style.willChange = "contents, transform";
   vbLastTime = performance.now();
   const step = (now) => {
     const dt = Math.min(0.05, Math.max(0.001, (now - vbLastTime) / 1000));
@@ -229,6 +232,7 @@ function setTreeSegment(segKey, options = {}) {
         "viewBox",
         `${currentVB.x.toFixed(1)} ${currentVB.y.toFixed(1)} ${currentVB.w.toFixed(1)} ${currentVB.h.toFixed(1)}`
       );
+      treeSvg.style.willChange = "";
       vbAnimFrame = null;
       return;
     }
@@ -270,7 +274,7 @@ function resizeCanvases() {
   fxCanvas.width = bgW;
   fxCanvas.height = bgH;
 }
-window.addEventListener("resize", resizeCanvases);
+window.addEventListener("resize", () => { resizeCanvases(); rebuildAuroraLayer(); });
 resizeCanvases();
 
 for (let i = 0; i < 65; i++) {
@@ -305,70 +309,144 @@ function spawnParticles(clientX, clientY, color = "#fde047", count = 18) {
 }
 
 let animTick = 0;
-function animateCanvases() {
-  animTick += 0.015;
+let lastFrameTs = 0;
+
+// Aurora-градиент рисуем один раз в offscreen-канвас и только перемещаем.
+// Раньше createRadialGradient вызывался каждый кадр — самая дорогая часть фона.
+const auroraLayer = document.createElement("canvas");
+const auroraCtx = auroraLayer.getContext("2d");
+let auroraReady = false;
+function rebuildAuroraLayer() {
+  const pad = Math.round(Math.max(bgW, bgH) * 0.18);
+  auroraLayer.width = bgW + pad * 2;
+  auroraLayer.height = Math.round(bgH * 0.75);
+  auroraCtx.clearRect(0, 0, auroraLayer.width, auroraLayer.height);
+  try {
+    const g = auroraCtx.createRadialGradient(
+      auroraLayer.width * 0.42, auroraLayer.height * 0.24, 10,
+      auroraLayer.width * 0.5, auroraLayer.height * 0.32, auroraLayer.width * 0.62
+    );
+    g.addColorStop(0, "rgba(16, 185, 129, 0.16)");
+    g.addColorStop(0.5, "rgba(14, 165, 233, 0.10)");
+    g.addColorStop(1, "rgba(4, 9, 20, 0)");
+    auroraCtx.fillStyle = g;
+    auroraCtx.fillRect(0, 0, auroraLayer.width, auroraLayer.height);
+    auroraReady = true;
+  } catch (err) {
+    // Урезанная реализация canvas (тестовое окружение) — просто без aurora
+    auroraReady = false;
+  }
+}
+
+// Спрайт свечения для частиц: один blur-радиальный градиент вместо shadowBlur
+// на каждой частице каждый кадр.
+const glowSprite = document.createElement("canvas");
+const GLOW_SPRITE_SIZE = 64;
+glowSprite.width = glowSprite.height = GLOW_SPRITE_SIZE;
+const glowReady = (function buildGlowSprite() {
+  try {
+    const c = glowSprite.getContext("2d");
+    const g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(0.42, "rgba(255,255,255,0.55)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    c.fillStyle = g;
+    c.fillRect(0, 0, GLOW_SPRITE_SIZE, GLOW_SPRITE_SIZE);
+    return true;
+  } catch (err) {
+    return false;
+  }
+})();
+
+const prefersReducedMotion = window.matchMedia
+  ? window.matchMedia("(prefers-reduced-motion: reduce)")
+  : { matches: false };
+let reducedMotion = !!prefersReducedMotion.matches;
+if (prefersReducedMotion.addEventListener) {
+  prefersReducedMotion.addEventListener("change", (e) => { reducedMotion = e.matches; });
+}
+
+function animateCanvases(ts) {
+  const dtMs = lastFrameTs ? Math.min(48, ts - lastFrameTs) : 16.7;
+  lastFrameTs = ts || 0;
+  // Нормируем скорость к 60 fps: на 120 Гц анимация не становится вдвое быстрее
+  const dt = dtMs / 16.7;
+  animTick += 0.015 * dt;
+
+  // ── Небо: готовая aurora-подложка + батч снежинок одним цветом
   bgCtx.clearRect(0, 0, bgW, bgH);
+  if (!reducedMotion && auroraReady) {
+    const drift = Math.sin(animTick * 0.35) * bgW * 0.06;
+    bgCtx.globalAlpha = 0.9;
+    bgCtx.drawImage(auroraLayer, -Math.max(bgW, bgH) * 0.18 + drift, -bgH * 0.06);
+    bgCtx.globalAlpha = 1;
+  }
 
-  const grad1 = bgCtx.createRadialGradient(
-    bgW * (0.3 + 0.15 * Math.sin(animTick)),
-    bgH * 0.18,
-    10,
-    bgW * 0.5,
-    bgH * 0.25,
-    bgW * 0.85
-  );
-  grad1.addColorStop(0, "rgba(16, 185, 129, 0.16)");
-  grad1.addColorStop(0.5, "rgba(14, 165, 233, 0.10)");
-  grad1.addColorStop(1, "rgba(4, 9, 20, 0)");
-  bgCtx.fillStyle = grad1;
-  bgCtx.fillRect(0, 0, bgW, bgH);
-
+  const buckets = [[], [], []];
   for (const s of bgSnow) {
-    s.y += s.vy;
-    s.x += s.vx + Math.sin(animTick + s.phase) * 0.25;
+    s.y += s.vy * dt;
+    s.x += s.vx * dt + (reducedMotion ? 0 : Math.sin(animTick + s.phase) * 0.25 * dt);
     if (s.y > bgH + 6) {
       s.y = -6;
       s.x = Math.random() * bgW;
     }
     if (s.x > bgW + 6) s.x = -6;
     if (s.x < -6) s.x = bgW + 6;
-
+    // одинаковую прозрачность рисуем одной пачкой — один fill вместо 65
+    buckets[s.alpha > 0.6 ? 0 : s.alpha > 0.42 ? 1 : 2].push(s);
+  }
+  bgCtx.fillStyle = "rgba(255, 255, 255, 0.72)";
+  for (const bucket of buckets) {
+    if (!bucket.length) continue;
     bgCtx.beginPath();
-    bgCtx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-    bgCtx.fillStyle = `rgba(255, 255, 255, ${s.alpha})`;
+    for (const s of bucket) {
+      bgCtx.moveTo(s.x + s.r, s.y);
+      bgCtx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    }
     bgCtx.fill();
   }
 
+  // ── Частицы кликов
   fxCtx.clearRect(0, 0, bgW, bgH);
-  for (let i = fxParticles.length - 1; i >= 0; i--) {
-    const p = fxParticles[i];
-    p.x += p.vx;
-    p.y += p.vy;
-    p.vy += 0.14;
-    p.alpha -= p.decay;
-    if (p.alpha <= 0) {
-      fxParticles.splice(i, 1);
-      continue;
+  if (fxParticles.length) {
+    fxCtx.globalCompositeOperation = "lighter";
+    for (let i = fxParticles.length - 1; i >= 0; i--) {
+      const p = fxParticles[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 0.14 * dt;
+      p.alpha -= p.decay * dt;
+      if (p.alpha <= 0) {
+        fxParticles.splice(i, 1);
+        continue;
+      }
+      const a = Math.max(0, p.alpha);
+      if (glowReady) {
+        const glow = p.size * 4.4;
+        fxCtx.globalAlpha = a * 0.5;
+        fxCtx.drawImage(glowSprite, p.x - glow / 2, p.y - glow / 2, glow, glow);
+      }
+      fxCtx.globalAlpha = a;
+      fxCtx.fillStyle = p.color;
+      if (p.star) {
+        fxCtx.save();
+        fxCtx.translate(p.x, p.y);
+        fxCtx.rotate(p.alpha * 4);
+        fxCtx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+        fxCtx.restore();
+      } else {
+        fxCtx.beginPath();
+        fxCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        fxCtx.fill();
+      }
     }
-    fxCtx.save();
-    fxCtx.globalAlpha = Math.max(0, p.alpha);
-    fxCtx.fillStyle = p.color;
-    fxCtx.shadowColor = p.color;
-    fxCtx.shadowBlur = 8;
-    if (p.star) {
-      fxCtx.translate(p.x, p.y);
-      fxCtx.rotate(p.alpha * 4);
-      fxCtx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
-    } else {
-      fxCtx.beginPath();
-      fxCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-      fxCtx.fill();
-    }
-    fxCtx.restore();
+    fxCtx.globalAlpha = 1;
+    fxCtx.globalCompositeOperation = "source-over";
   }
 
   requestAnimationFrame(animateCanvases);
 }
+rebuildAuroraLayer();
 requestAnimationFrame(animateCanvases);
 
 // ============================================================================

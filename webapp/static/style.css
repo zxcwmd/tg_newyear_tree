@@ -44,18 +44,23 @@ body {
 }
 
 .glass-panel {
-  background: rgba(15, 23, 42, 0.72);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  box-shadow: 0 12px 32px rgba(2, 6, 23, 0.55);
+  /* Без backdrop-filter: панель висит над анимированным canvas, и blur
+     пересчитывался каждый кадр — интерфейс «дрожал» при скролле и зуме.
+     Плотная заливка + верхний блик дают тот же вид бесплатно. */
+  background:
+    linear-gradient(180deg, rgba(51, 65, 85, 0.42) 0%, rgba(15, 23, 42, 0.92) 42%),
+    rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 12px 32px rgba(2, 6, 23, 0.55);
 }
 
 .glass-header {
-  background: rgba(15, 23, 42, 0.68);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  background:
+    linear-gradient(180deg, rgba(51, 65, 85, 0.35) 0%, rgba(15, 23, 42, 0.9) 55%),
+    rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 18px;
   padding: 12px 14px;
   margin-bottom: 10px;
@@ -351,6 +356,9 @@ header h1 {
   width: 100%;
   height: auto;
   display: block;
+  /* Камера зумит через viewBox: подсказываем браузеру держать слой на GPU */
+  will-change: contents;
+  transform: translateZ(0);
   border-radius: 14px;
   cursor: pointer;
   touch-action: none;
@@ -418,8 +426,7 @@ header h1 {
   padding: 10px 10px 8px;
   border-radius: 14px;
   border: 1.5px solid rgba(148, 163, 184, 0.22);
-  background: rgba(30, 41, 59, 0.78);
-  backdrop-filter: blur(10px);
+  background: linear-gradient(180deg, rgba(51, 65, 85, 0.6), rgba(30, 41, 59, 0.95));
   color: #fff;
   cursor: pointer;
   min-width: 66px;
@@ -593,13 +600,12 @@ header h1 {
 }
 
 .podium-card {
-  background: rgba(15, 23, 42, 0.78);
+  background: rgba(15, 23, 42, 0.92);
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 16px;
   padding: 12px 6px 10px;
   text-align: center;
   position: relative;
-  backdrop-filter: blur(14px);
 }
 
 .podium-card.rank-1 {
@@ -961,8 +967,7 @@ header h1 {
 }
 
 .shop-item-card {
-  background: rgba(15, 23, 42, 0.76);
-  backdrop-filter: blur(14px);
+  background: rgba(15, 23, 42, 0.92);
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 16px;
   padding: 14px 10px;
@@ -1009,8 +1014,7 @@ header h1 {
 }
 
 .donate-card {
-  background: rgba(15, 23, 42, 0.78);
-  backdrop-filter: blur(16px);
+  background: rgba(15, 23, 42, 0.93);
   border: 1px solid rgba(250, 204, 21, 0.24);
   border-radius: 18px;
   padding: 14px;
@@ -1080,15 +1084,13 @@ header h1 {
   position: fixed;
   inset: 0;
   background: rgba(2, 6, 23, 0.82);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 16px;
   z-index: 95;
   opacity: 1;
-  transition: opacity 0.26s ease, backdrop-filter 0.26s ease;
+  transition: opacity 0.26s ease;
 }
 
 /* Плавное появление: вместо display:none — прозрачность + visibility,
@@ -1317,7 +1319,6 @@ header h1 {
   left: 50%;
   transform: translateX(-50%) translateY(80px);
   background: rgba(22, 163, 74, 0.95);
-  backdrop-filter: blur(8px);
   color: #fff;
   padding: 10px 20px;
   border-radius: 999px;
