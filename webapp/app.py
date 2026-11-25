@@ -20,6 +20,7 @@ from config import (
     LEGACY_SHARED_TREE_ID,
     LOOTBOX_POOL,
     LOOTBOX_PRICE,
+    NFT_MINT_ENABLED,
     ORNAMENTS,
     PERSONAL_TREE_BASE,
     TREE_THEMES,
@@ -205,6 +206,16 @@ class DonateOrderRequest(BaseModel):
 
 class CreateTeamTreeRequest(BaseModel):
     title: str = ""
+    init_data: str = ""
+    user: UserInfoModel | None = None
+
+
+class NftGiftRequest(BaseModel):
+    to_user_id: int
+    token_id: int
+    message: str = ""
+    wallet: str = ""
+    to_first_name: str = ""
     init_data: str = ""
     user: UserInfoModel | None = None
 
@@ -407,6 +418,9 @@ async def get_tree(
         "is_personal_tree": is_personal_tree_id(cid),
         "members": members,
         "members_count": len(members),
+        "nft_gifts": await db.get_nft_gifts(cid),
+        "nft_catalog": db.NFT_GIFTS,
+        "nft_mint_enabled": NFT_MINT_ENABLED,
         "personal_tree_id": personal_tree_id(user_id),
         "team_tree": await db.get_owned_team_tree(user_id),
     }
@@ -468,6 +482,51 @@ async def join_team_tree_endpoint(req: JoinTeamTreeRequest):
         "profile": profile,
         "referral_bonus_applied": referral_bonus,
     }
+
+
+@app.get("/api/nft-gifts/catalog")
+async def nft_gifts_catalog():
+    """Коллекция NFT-подарков, которые можно прикрепить к открытке."""
+    return {"ok": True, "catalog": db.NFT_GIFTS}
+
+
+@app.post("/api/nft-gifts")
+async def send_nft_gift(req: NftGiftRequest):
+    """Прикрепляет NFT-подарок к открытке: сначала локальный реестр, затем (опционально) минтинг."""
+    uid = await _ensure_user_from_req(req.init_data, req.user)
+    if req.to_user_id == uid:
+        raise HTTPException(400, "Нельзя отправить подарок самому себе")
+    item = db.get_nft_gift_item(req.token_id)
+    if not item:
+        raise HTTPException(404, "Такого NFT-подарка нет в коллекции")
+    me = await db.get_user_profile(uid)
+    gift = await db.add_nft_gift(
+        to_user_id=req.to_user_id,
+        from_user_id=uid,
+        token_id=req.token_id,
+        message=req.message,
+        wallet=req.wallet,
+        from_name=me.get("first_name") or "Друг",
+    )
+    if not gift:
+        raise HTTPException(400, "Не удалось прикрепить подарок")
+    return {
+        "ok": True,
+        "gift": gift,
+        "item": item,
+        # Пока подарок живёт в локальном реестре. См. NFT_INTEGRATION.md:
+        # при NFT_MINT_ENABLED=1 здесь будет результат минта в TON/Telegram Gifts.
+        "minted": False,
+        "mint_enabled": NFT_MINT_ENABLED,
+    }
+
+
+@app.get("/api/nft-gifts/{chat_id}")
+async def list_nft_gifts(chat_id: int, user_id: int = Query(default=0)):
+    cid = await resolve_tree_id(chat_id, user_id)
+    assert_tree_access(cid, user_id)
+    gifts = await db.get_nft_gifts(cid)
+    return {"ok": True, "gifts": gifts, "catalog": db.NFT_GIFTS}
 
 
 @app.post("/api/daily-claim")
@@ -677,10 +736,12 @@ async def final_image(chat_id: int, user_id: int = Query(default=0)):
         raise HTTPException(404, "Tree not found")
     decorations = await db.get_decorations(cid)
     members = await db.get_tree_members(cid) if (cid < 0 and not is_personal_tree_id(cid)) else []
+    gifts = await db.get_nft_gifts(cid)
     png = generate_tree_image(
         decorations,
         title=f"Ёлка: {tree.get('chat_title') or cid}",
         members=members,
+        gifts=gifts,
     )
     return Response(content=png, media_type="image/png")
 

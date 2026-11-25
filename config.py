@@ -73,7 +73,7 @@ ORNAMENTS = {
     "ball": {
         "name": "Шар",
         "emoji": "🔴",
-        "price": 25,
+        "price": 700,
         "colors": {
             "red": "#e63946",
             "gold": "#f4a261",
@@ -86,7 +86,7 @@ ORNAMENTS = {
     "candy": {
         "name": "Конфета",
         "emoji": "🍬",
-        "price": 40,
+        "price": 950,
         "colors": {
             "red": "#e63946",
             "pink": "#ff6b9d",
@@ -95,7 +95,7 @@ ORNAMENTS = {
     "snowflake": {
         "name": "Снежинка",
         "emoji": "❄️",
-        "price": 60,
+        "price": 1300,
         "colors": {
             "white": "#ffffff",
             "blue": "#a8dadc",
@@ -104,7 +104,7 @@ ORNAMENTS = {
     "bell": {
         "name": "Колокольчик",
         "emoji": "🔔",
-        "price": 85,
+        "price": 1800,
         "colors": {
             "gold": "#ffd60a",
         },
@@ -112,7 +112,7 @@ ORNAMENTS = {
     "gift": {
         "name": "Подарок",
         "emoji": "🎁",
-        "price": 120,
+        "price": 2500,
         "colors": {
             "red": "#e63946",
             "blue": "#4361ee",
@@ -123,7 +123,7 @@ ORNAMENTS = {
     "star": {
         "name": "Звезда",
         "emoji": "⭐",
-        "price": 200,
+        "price": 4000,
         "colors": {
             "gold": "#ffd60a",
             "silver": "#e9ecef",
@@ -132,7 +132,7 @@ ORNAMENTS = {
     "angel": {
         "name": "Ангелочек",
         "emoji": "👼",
-        "price": 350,
+        "price": 6500,
         "colors": {
             "gold": "#fde047",
             "white": "#ffffff",
@@ -142,7 +142,7 @@ ORNAMENTS = {
     "crystal": {
         "name": "Кристалл",
         "emoji": "💎",
-        "price": 500,
+        "price": 9000,
         "colors": {
             "cyan": "#38bdf8",
             "purple": "#c084fc",
@@ -259,6 +259,13 @@ DONATE_PACKS = {
         },
     },
 }
+
+# --- NFT-подарки -------------------------------------------------------------
+# Локальный реестр уже работает. Чтобы включить настоящий минт (TON/Telegram-подарки),
+# заполните параметры ниже и реализуйте mint_gift() в database/webapp (см. NFT_INTEGRATION.md).
+NFT_MINT_ENABLED = os.getenv("NFT_MINT_ENABLED", "0").strip() in ("1", "true", "yes")
+NFT_COLLECTION_ADDRESS = os.getenv("NFT_COLLECTION_ADDRESS", "").strip()
+TON_API_KEY = os.getenv("TON_API_KEY", "").strip()
 
 # Поздравления для финала
 GREETINGS = [
