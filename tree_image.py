@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from config import ORNAMENTS
 
 SCALE = 2
-W, H = 800, 1000          # итоговый размер открытки
+W, H = 900, 1125          # итоговый размер открытки
 SW, SH = W * SCALE, H * SCALE  # рабочее разрешение
 
 # Цвета сцены
@@ -74,6 +74,43 @@ def _load_font(size: int):
         except Exception:
             continue
     return ImageFont.load_default()
+
+
+EMOJI_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/truetype/emoji/NotoColorEmoji.ttf",
+    "/System/Library/Fonts/Apple Color Emoji.ttc",
+]
+
+
+def _load_emoji_font(size: int):
+    for path in EMOJI_FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            continue
+    return None
+
+
+def _draw_emoji(img: Image.Image, draw: ImageDraw.ImageDraw, cx: float, cy: float, size: float, emoji: str):
+    """Эмодзи, если есть эмодзи-шрифт; иначе — золотой медальон с символом."""
+    font = _load_emoji_font(int(size))
+    if font is not None:
+        try:
+            bbox = draw.textbbox((0, 0), emoji, font=font, embedded_color=True)
+            w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            draw.text((cx - w / 2, cy - h / 2 - bbox[1]), emoji, font=font, embedded_color=True)
+            return
+        except Exception:
+            pass
+    # Фолбэк: медальон с символом из обычного шрифта
+    r = size * 0.62
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(37, 47, 74), outline=(253, 224, 71), width=max(1, int(SCALE * 1.4)))
+    draw.ellipse([cx - r * 0.78, cy - r * 0.82, cx + r * 0.1, cy - r * 0.05], fill=(255, 255, 255, 40))
+    f = _load_font(int(size * 0.72))
+    bbox = draw.textbbox((0, 0), emoji, font=f)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text((cx - tw / 2, cy - th / 2 - bbox[1]), emoji, font=f, fill=(255, 241, 176))
 
 
 def _s(v: float) -> float:
@@ -729,6 +766,75 @@ def _draw_person(img: Image.Image, draw: ImageDraw.ImageDraw, cx: float, cy: flo
     d.ellipse([tip_x - pom_r * 0.5, tip_y - pom_r * 0.6, tip_x + pom_r * 0.2, tip_y - pom_r * 0.1], fill=(255, 255, 255))
 
 
+def _draw_nft_gifts(img: Image.Image, draw: ImageDraw.ImageDraw, gifts: list[dict]):
+    """Полка с прикреплёнными NFT-подарками у подножия ёлки."""
+    if not gifts:
+        return
+    shown = gifts[:4]
+    card_w, card_h = _s(210), _s(104)
+    gap = _s(12)
+    if len(shown) > 2:  # компактнее, чтобы 3–4 карточки влезли по ширине
+        card_w = _s(186)
+    total = len(shown) * card_w + (len(shown) - 1) * gap
+    start_x = SW / 2 - total / 2
+    base_y = _s(730)
+
+    # Подложка-полка
+    shelf = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
+    ImageDraw.Draw(shelf).rounded_rectangle(
+        [start_x - _s(16), base_y - _s(10), start_x + total + _s(16), base_y + card_h + _s(18)],
+        radius=_s(18), fill=(8, 16, 32, 120),
+    )
+    shelf = shelf.filter(ImageFilter.GaussianBlur(_s(6)))
+    img.alpha_composite(shelf)
+
+    title_font = _load_font(int(_s(14)))
+    sub_font = _load_font(int(_s(11)))
+
+    def _trim(text: str, font, max_w: float) -> str:
+        """Обрезает строку по реальной ширине шрифта."""
+        text = str(text)
+        if draw.textlength(text, font=font) <= max_w:
+            return text
+        while text and draw.textlength(text + "…", font=font) > max_w:
+            text = text[:-1]
+        return text + "…"
+
+    for i, gift in enumerate(shown):
+        x0 = start_x + i * (card_w + gap)
+        y0 = base_y
+        # Карточка с «фольгой» и рамкой
+        card = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
+        cd = ImageDraw.Draw(card)
+        cd.rounded_rectangle([x0, y0, x0 + card_w, y0 + card_h], radius=_s(14), fill=(18, 28, 50, 235),
+                             outline=(253, 224, 71, 210), width=max(1, int(SCALE * 1.5)))
+        # Лёгкий блик сверху
+        cd.rounded_rectangle([x0 + _s(2), y0 + _s(2), x0 + card_w - _s(2), y0 + card_h * 0.45],
+                             radius=_s(12), fill=(255, 255, 255, 16))
+        img.alpha_composite(card)
+
+        # Эмодзи-медальон
+        _draw_emoji(img, draw, x0 + _s(32), y0 + card_h / 2, _s(42), gift.get("emoji") or "🎁")
+
+        # Тексты: название, подпись «от …» и сообщение (с обрезкой по ширине)
+        text_x = x0 + _s(58)
+        text_w = card_w - _s(66)
+        title = _trim(gift.get("title") or "NFT-подарок", title_font, text_w)
+        draw.text((text_x, y0 + _s(16)), title, font=title_font, fill=(255, 249, 219))
+        from_name = _trim(gift.get("from_name") or "друга", sub_font, text_w - _s(18))
+        draw.text((text_x, y0 + _s(36)), f"от {from_name}", font=sub_font, fill=(147, 197, 253))
+        msg = str(gift.get("message") or "").strip()
+        if msg:
+            draw.text((text_x, y0 + _s(54)), _trim(msg, sub_font, text_w), font=sub_font, fill=(203, 213, 225))
+        # Номер токена — «сертификат» подарка
+        draw.text((text_x, y0 + _s(72)), _trim(f"#{gift.get('token_id', 0)}", sub_font, text_w),
+                  font=sub_font, fill=(120, 140, 170))
+
+    if len(gifts) > len(shown):
+        draw.text((SW / 2 - _s(30), base_y + card_h + _s(22)),
+                  f"ещё +{len(gifts) - len(shown)}", font=sub_font, fill=(253, 224, 71))
+
+
 def _draw_crowd(img: Image.Image, draw: ImageDraw.ImageDraw, members: list[dict], count: int):
     """Человечки под ёлкой: до 16 фигурок + бейдж «+N»."""
     if count <= 0:
@@ -773,6 +879,7 @@ def generate_tree_image(
     decorations: list[dict],
     title: str = "Новогодняя ёлка",
     members: list[dict] | None = None,
+    gifts: list[dict] | None = None,
 ) -> bytes:
     """PNG открытки: текстурированная ёлка, объёмные игрушки и человечки-участники."""
     img = Image.new("RGBA", (SW, SH), BG_TOP + (255,))
@@ -793,6 +900,7 @@ def generate_tree_image(
         fn(img, draw, x, y, color_hex)
 
     _draw_snowfall(draw)
+    _draw_nft_gifts(img, draw, gifts or [])
     _draw_crowd(img, draw, members or [], len(members or []))
 
     out = img.convert("RGB").resize((W, H), Image.LANCZOS)

@@ -104,6 +104,11 @@ let state = {
   treeThemes: null,
   lootboxPrice: 100,
   lootboxPool: [],
+  nftCatalog: [],
+  nftGifts: [],
+  nftDraftToken: 0,
+  nftDraftTo: 0,
+  nftMintEnabled: false,
   adventRewards: [],
   dailyStreak: 0,
   canClaimDaily: true,
@@ -1766,6 +1771,9 @@ async function refreshTreeData(inviteOverride = "") {
   state.treeThemes = data.tree_themes || state.treeThemes;
   state.lootboxPrice = Number(data.lootbox_price || 100);
   if (Array.isArray(data.lootbox_pool) && data.lootbox_pool.length) state.lootboxPool = data.lootbox_pool;
+  if (Array.isArray(data.nft_catalog)) state.nftCatalog = data.nft_catalog;
+  if (Array.isArray(data.nft_gifts)) state.nftGifts = data.nft_gifts;
+  state.nftMintEnabled = !!data.nft_mint_enabled;
   state.adventRewards = data.advent_rewards || state.adventRewards;
   state.decorations = data.decorations || [];
   state.stats = data.stats || [];
@@ -1793,6 +1801,8 @@ async function refreshTreeData(inviteOverride = "") {
   renderDonateShop();
   renderDecorations();
   renderLeaderboard();
+  renderPostcardGifts(data.nft_gifts || []);
+  schedulePostcardRefresh();
   saveBackup();
 }
 
@@ -1920,10 +1930,238 @@ treeSvg.addEventListener("click", async (e) => {
   }
 });
 
-$("#previewBtn").addEventListener("click", () => {
-  $("#previewImg").src = `/api/final-image/${requestChatId()}?user_id=${currentUser.id}&t=${Date.now()}`;
+// ============================================================================
+// 12. ИТОГОВАЯ ОТКРЫТКА: живое превью, скачивание, шаринг и NFT-подарки
+// ============================================================================
+let postcardTimer = null;
+let postcardLoading = false;
+let postcardBlobUrl = null;
+
+function postcardUrl() {
+  return `/api/final-image/${requestChatId()}?user_id=${currentUser.id}&t=${Date.now()}`;
+}
+
+function renderPostcardGifts(gifts) {
+  const boxes = [$("#postcardGifts"), $("#previewGifts")].filter(Boolean);
+  for (const box of boxes) {
+    box.innerHTML = "";
+    const list = Array.isArray(gifts) ? gifts : [];
+    if (!list.length) {
+      box.innerHTML = `<div class="gift-empty">🎁 Подарков пока нет — прикрепи NFT-подарок к открытке, и он появится на ней.</div>`;
+      continue;
+    }
+    for (const g of list.slice(0, 6)) {
+      const card = document.createElement("div");
+      card.className = "gift-chip";
+      card.innerHTML = `
+        <span class="gift-emoji">${g.emoji || "🎁"}</span>
+        <span class="gift-meta">
+          <b>${escapeHtml(g.title || "NFT-подарок")}</b>
+          <small>от ${escapeHtml(g.from_name || "друга")}</small>
+        </span>
+      `;
+      box.appendChild(card);
+    }
+  }
+}
+
+async function loadPostcard(force = false) {
+  const img = $("#postcardImg");
+  const skeleton = $("#postcardSkeleton");
+  if (!img || postcardLoading) return;
+  postcardLoading = true;
+  try {
+    const res = await fetch(postcardUrl(), { cache: "no-store" });
+    if (!res.ok) throw new Error("Не удалось собрать открытку");
+    const blob = await res.blob();
+    if (postcardBlobUrl) URL.revokeObjectURL(postcardBlobUrl);
+    postcardBlobUrl = URL.createObjectURL(blob);
+    img.src = postcardBlobUrl;
+    img.classList.add("loaded");
+    skeleton?.classList.add("hidden");
+  } catch (e) {
+    if (skeleton) {
+      skeleton.textContent = "Не удалось собрать открытку 😢 Нажми 🔄";
+      skeleton.classList.remove("hidden");
+    }
+  } finally {
+    postcardLoading = false;
+  }
+}
+
+function schedulePostcardRefresh() {
+  clearTimeout(postcardTimer);
+  postcardTimer = setTimeout(() => loadPostcard(), 1200);
+}
+
+async function downloadPostcard() {
+  try {
+    haptic("medium");
+    const blob = postcardBlobUrl ? await (await fetch(postcardBlobUrl)).blob() : await (await fetch(postcardUrl())).blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `newyear-tree-${Date.now()}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast("Открытка сохранена! 🖼");
+  } catch (e) {
+    toast("Не удалось скачать открытку", true);
+  }
+}
+
+async function sharePostcard() {
+  const text = "🎄 Наша новогодняя ёлка! С Новым годом!";
+  haptic("light");
+  try {
+    const blob = await (await fetch(postcardUrl())).blob();
+    const file = new File([blob], "newyear-tree.png", { type: "image/png" });
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], text });
+      return;
+    }
+  } catch (e) {}
+  const link = `${state.webappUrl || window.location.origin}`;
+  const shareLink = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
+  if (tg?.openTelegramLink) {
+    tg.openTelegramLink(shareLink);
+  } else {
+    try {
+      await navigator.clipboard.writeText(link);
+      toast("Ссылка на ёлку скопирована 📋");
+    } catch (e) {
+      toast(link);
+    }
+  }
+}
+
+function openPostcardFullscreen() {
+  $("#previewImg").src = $("#postcardImg")?.src || postcardUrl();
   $("#previewModal").classList.remove("hidden");
+}
+
+$("#previewBtn")?.addEventListener("click", openPostcardFullscreen);
+$("#postcardOpenBtn")?.addEventListener("click", openPostcardFullscreen);
+$("#postcardRefreshBtn")?.addEventListener("click", () => {
+  haptic("light");
+  loadPostcard(true);
 });
+// ── NFT-подарки ────────────────────────────────────────────────────────────
+function renderNftCatalog() {
+  const box = $("#nftCatalog");
+  if (!box) return;
+  const catalog = Array.isArray(state.nftCatalog) ? state.nftCatalog : [];
+  box.innerHTML = "";
+  const rarityNames = {
+    common: "обычный",
+    rare: "редкий",
+    epic: "эпический",
+    legendary: "легендарный",
+    mythic: "мифический",
+  };
+  for (const item of catalog) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "nft-card" + (Number(state.nftDraftToken) === Number(item.token_id) ? " selected" : "");
+    card.innerHTML = `
+      <span class="nft-emoji">${item.emoji}</span>
+      <span class="nft-meta">
+        <b>${escapeHtml(item.title)}</b>
+        <small>${escapeHtml(item.subtitle || "")} · ${rarityNames[item.rarity] || item.rarity}</small>
+      </span>
+    `;
+    card.onclick = () => {
+      state.nftDraftToken = Number(item.token_id);
+      haptic("light");
+      renderNftCatalog();
+    };
+    box.appendChild(card);
+  }
+}
+
+function renderNftRecipients() {
+  const box = $("#nftToOptions");
+  if (!box) return;
+  box.innerHTML = "";
+  const members = (state.members || []).filter((m) => Number(m.user_id) !== Number(state.myUserId));
+  if (!members.length) {
+    box.innerHTML = `<div class="gift-empty">Нет других участников: введи ID друга вручную ниже 👇</div>`;
+    return;
+  }
+  for (const m of members) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "nft-to-chip" + (Number(state.nftDraftTo) === Number(m.user_id) ? " selected" : "");
+    chip.textContent = `${m.first_name || "Друг"} (#${m.user_id})`;
+    chip.onclick = () => {
+      state.nftDraftTo = Number(m.user_id);
+      $("#nftToInput").value = String(m.user_id);
+      haptic("light");
+      renderNftRecipients();
+    };
+    box.appendChild(chip);
+  }
+}
+
+function openNftGiftModal() {
+  if (!Array.isArray(state.nftCatalog) || !state.nftCatalog.length) {
+    toast("Коллекция подарков ещё не загружена", true);
+    return;
+  }
+  state.nftDraftToken = state.nftDraftToken || Number(state.nftCatalog[0].token_id);
+  renderNftRecipients();
+  renderNftCatalog();
+  $("#nftGiftModal").classList.remove("hidden");
+}
+
+async function sendNftGift() {
+  const toUserId = Number($("#nftToInput").value || state.nftDraftTo || 0);
+  if (!toUserId) {
+    toast("Укажи, кому подарить (ID друга)", true);
+    return;
+  }
+  if (!state.nftDraftToken) {
+    toast("Выбери подарок из коллекции", true);
+    return;
+  }
+  try {
+    const res = await fetch("/api/nft-gifts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to_user_id: toUserId,
+        token_id: Number(state.nftDraftToken),
+        message: ($("#nftMessageInput").value || "").trim(),
+        init_data: initData,
+        user: currentUser,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Не удалось прикрепить подарок");
+    haptic("heavy");
+    toast(`Подарок «${data.item?.title || "NFT"}» прикреплён к открытке! 🎁`);
+    $("#nftGiftModal").classList.add("hidden");
+    $("#nftMessageInput").value = "";
+    await refreshTreeData();
+    loadPostcard(true);
+  } catch (err) {
+    toast(err.message || "Не удалось отправить подарок", true);
+  }
+}
+
+$("#postcardGiftBtn")?.addEventListener("click", openNftGiftModal);
+$("#closeNftGiftModalBtn")?.addEventListener("click", () => $("#nftGiftModal").classList.add("hidden"));
+$("#nftGiftModal")?.addEventListener("click", (e) => {
+  if (e.target === $("#nftGiftModal")) $("#nftGiftModal").classList.add("hidden");
+});
+$("#sendNftGiftBtn")?.addEventListener("click", sendNftGift);
+
+$("#postcardDownloadBtn")?.addEventListener("click", downloadPostcard);
+$("#previewDownloadBtn")?.addEventListener("click", downloadPostcard);
+$("#postcardShareBtn")?.addEventListener("click", sharePostcard);
+$("#previewShareBtn")?.addEventListener("click", sharePostcard);
 
 $("#closeModalBtn").addEventListener("click", () => {
   $("#previewModal").classList.add("hidden");
