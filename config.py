@@ -260,13 +260,6 @@ DONATE_PACKS = {
     },
 }
 
-# --- NFT-подарки -------------------------------------------------------------
-# Локальный реестр уже работает. Чтобы включить настоящий минт (TON/Telegram-подарки),
-# заполните параметры ниже и реализуйте mint_gift() в database/webapp (см. NFT_INTEGRATION.md).
-NFT_MINT_ENABLED = os.getenv("NFT_MINT_ENABLED", "0").strip() in ("1", "true", "yes")
-NFT_COLLECTION_ADDRESS = os.getenv("NFT_COLLECTION_ADDRESS", "").strip()
-TON_API_KEY = os.getenv("TON_API_KEY", "").strip()
-
 # Поздравления для финала
 GREETINGS = [
     "🎉 С Новым годом! Ваша ёлка наряжена — посмотрите, какая красота получилась!",

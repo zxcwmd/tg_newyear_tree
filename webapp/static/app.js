@@ -104,11 +104,6 @@ let state = {
   treeThemes: null,
   lootboxPrice: 100,
   lootboxPool: [],
-  nftCatalog: [],
-  nftGifts: [],
-  nftDraftToken: 0,
-  nftDraftTo: 0,
-  nftMintEnabled: false,
   adventRewards: [],
   dailyStreak: 0,
   canClaimDaily: true,
@@ -156,39 +151,106 @@ const SEGMENTS_VB = {
 };
 
 let currentVB = { ...SEGMENTS_VB.all };
+let vbVel = { x: 0, y: 0, w: 0, h: 0 };
 let vbAnimFrame = null;
+let vbLastTime = 0;
+let vbTarget = { ...SEGMENTS_VB.all };
 
-function setTreeSegment(segKey) {
+// Пружинная интерполяция: значения «доезжают» до цели без рывка на старте,
+// с лёгким перелётом и мягкой остановкой. Скорость ограничена через dt,
+// чтобы на медленном устройстве камера не прыгала.
+const VB_STIFFNESS = 180;
+const VB_DAMPING = 26;
+
+function updateSegmentIndicator(segKey) {
+  const bar = $(".segment-bar");
+  const active = document.querySelector(`.seg-btn[data-seg="${segKey}"]`);
+  if (!bar || !active) return;
+  let ink = bar.querySelector(".segment-ink");
+  if (!ink) {
+    ink = document.createElement("span");
+    ink.className = "segment-ink";
+    bar.appendChild(ink);
+  }
+  const barRect = bar.getBoundingClientRect();
+  const btnRect = active.getBoundingClientRect();
+  // Позиция относительно внутренней области (без учёта padding)
+  const left = btnRect.left - barRect.left - bar.clientLeft;
+  ink.style.width = `${btnRect.width}px`;
+  ink.style.transform = `translateX(${left}px)`;
+  ink.classList.add("ready");
+}
+
+function setTreeSegment(segKey, options = {}) {
   const target = SEGMENTS_VB[segKey] || SEGMENTS_VB.all;
+  const changed = state.activeSegment !== segKey || options.force;
   state.activeSegment = segKey;
-  $$(".seg-btn").forEach((b) => b.classList.toggle("active", b.dataset.seg === segKey));
-  haptic("light");
+  $$(".seg-btn").forEach((b) => {
+    const on = b.dataset.seg === segKey;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+  updateSegmentIndicator(segKey);
+  if (options.haptic !== false) haptic("light");
 
-  if (vbAnimFrame) cancelAnimationFrame(vbAnimFrame);
-  const startVB = { ...currentVB };
-  const startTime = performance.now();
-  const duration = 260;
+  vbTarget = { ...target };
 
-  function step(now) {
-    const t = Math.min(1, (now - startTime) / duration);
-    const ease = 1 - Math.pow(1 - t, 3);
-    currentVB.x = startVB.x + (target.x - startVB.x) * ease;
-    currentVB.y = startVB.y + (target.y - startVB.y) * ease;
-    currentVB.w = startVB.w + (target.w - startVB.w) * ease;
-    currentVB.h = startVB.h + (target.h - startVB.h) * ease;
+  // Если анимация уже идёт — просто меняем цель. Скорость сохраняется,
+  // поэтому быстрые клики по секторам не дают рывков.
+  if (vbAnimFrame) return;
+  if (!changed && !options.force) return;
+
+  // На время перелёта включаем композитный слой: первый кадр в новом секторе
+  // не «провисает» из-за пересчёта градиентов и фильтров SVG.
+  treeSvg.style.willChange = "contents, transform";
+  vbLastTime = performance.now();
+  const step = (now) => {
+    const dt = Math.min(0.05, Math.max(0.001, (now - vbLastTime) / 1000));
+    vbLastTime = now;
+
+    // Демпфированная пружина для каждой координаты камеры
+    let settled = true;
+    for (const k of ["x", "y", "w", "h"]) {
+      const delta = vbTarget[k] - currentVB[k];
+      vbVel[k] += (delta * VB_STIFFNESS - vbVel[k] * VB_DAMPING) * dt;
+      currentVB[k] += vbVel[k] * dt;
+      if (Math.abs(delta) > 0.02 || Math.abs(vbVel[k]) > 0.02) settled = false;
+    }
+
     treeSvg.setAttribute(
       "viewBox",
-      `${currentVB.x.toFixed(1)} ${currentVB.y.toFixed(1)} ${currentVB.w.toFixed(1)} ${currentVB.h.toFixed(1)}`
+      `${currentVB.x.toFixed(2)} ${currentVB.y.toFixed(2)} ${currentVB.w.toFixed(2)} ${currentVB.h.toFixed(2)}`
     );
-    if (t < 1) {
-      vbAnimFrame = requestAnimationFrame(step);
+
+    if (settled) {
+      // Дотягиваем до цели ровно и отпускаем кадр
+      for (const k of ["x", "y", "w", "h"]) {
+        currentVB[k] = vbTarget[k];
+        vbVel[k] = 0;
+      }
+      treeSvg.setAttribute(
+        "viewBox",
+        `${currentVB.x.toFixed(1)} ${currentVB.y.toFixed(1)} ${currentVB.w.toFixed(1)} ${currentVB.h.toFixed(1)}`
+      );
+      treeSvg.style.willChange = "";
+      vbAnimFrame = null;
+      return;
     }
-  }
+    vbAnimFrame = requestAnimationFrame(step);
+  };
   vbAnimFrame = requestAnimationFrame(step);
 }
 
 $$(".seg-btn").forEach((btn) => {
   btn.addEventListener("click", () => setTreeSegment(btn.dataset.seg));
+});
+
+// Индикатор должен стоять на месте и после ресайза/поворота экрана
+window.addEventListener("resize", () => {
+  const ink = document.querySelector(".segment-ink");
+  if (ink) ink.classList.add("no-anim");
+  updateSegmentIndicator(state.activeSegment || "all");
+  requestAnimationFrame(() => document.querySelector(".segment-ink")?.classList.remove("no-anim"));
 });
 
 // ============================================================================
@@ -212,7 +274,7 @@ function resizeCanvases() {
   fxCanvas.width = bgW;
   fxCanvas.height = bgH;
 }
-window.addEventListener("resize", resizeCanvases);
+window.addEventListener("resize", () => { resizeCanvases(); rebuildAuroraLayer(); });
 resizeCanvases();
 
 for (let i = 0; i < 65; i++) {
@@ -247,70 +309,144 @@ function spawnParticles(clientX, clientY, color = "#fde047", count = 18) {
 }
 
 let animTick = 0;
-function animateCanvases() {
-  animTick += 0.015;
+let lastFrameTs = 0;
+
+// Aurora-градиент рисуем один раз в offscreen-канвас и только перемещаем.
+// Раньше createRadialGradient вызывался каждый кадр — самая дорогая часть фона.
+const auroraLayer = document.createElement("canvas");
+const auroraCtx = auroraLayer.getContext("2d");
+let auroraReady = false;
+function rebuildAuroraLayer() {
+  const pad = Math.round(Math.max(bgW, bgH) * 0.18);
+  auroraLayer.width = bgW + pad * 2;
+  auroraLayer.height = Math.round(bgH * 0.75);
+  auroraCtx.clearRect(0, 0, auroraLayer.width, auroraLayer.height);
+  try {
+    const g = auroraCtx.createRadialGradient(
+      auroraLayer.width * 0.42, auroraLayer.height * 0.24, 10,
+      auroraLayer.width * 0.5, auroraLayer.height * 0.32, auroraLayer.width * 0.62
+    );
+    g.addColorStop(0, "rgba(16, 185, 129, 0.16)");
+    g.addColorStop(0.5, "rgba(14, 165, 233, 0.10)");
+    g.addColorStop(1, "rgba(4, 9, 20, 0)");
+    auroraCtx.fillStyle = g;
+    auroraCtx.fillRect(0, 0, auroraLayer.width, auroraLayer.height);
+    auroraReady = true;
+  } catch (err) {
+    // Урезанная реализация canvas (тестовое окружение) — просто без aurora
+    auroraReady = false;
+  }
+}
+
+// Спрайт свечения для частиц: один blur-радиальный градиент вместо shadowBlur
+// на каждой частице каждый кадр.
+const glowSprite = document.createElement("canvas");
+const GLOW_SPRITE_SIZE = 64;
+glowSprite.width = glowSprite.height = GLOW_SPRITE_SIZE;
+const glowReady = (function buildGlowSprite() {
+  try {
+    const c = glowSprite.getContext("2d");
+    const g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(0.42, "rgba(255,255,255,0.55)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    c.fillStyle = g;
+    c.fillRect(0, 0, GLOW_SPRITE_SIZE, GLOW_SPRITE_SIZE);
+    return true;
+  } catch (err) {
+    return false;
+  }
+})();
+
+const prefersReducedMotion = window.matchMedia
+  ? window.matchMedia("(prefers-reduced-motion: reduce)")
+  : { matches: false };
+let reducedMotion = !!prefersReducedMotion.matches;
+if (prefersReducedMotion.addEventListener) {
+  prefersReducedMotion.addEventListener("change", (e) => { reducedMotion = e.matches; });
+}
+
+function animateCanvases(ts) {
+  const dtMs = lastFrameTs ? Math.min(48, ts - lastFrameTs) : 16.7;
+  lastFrameTs = ts || 0;
+  // Нормируем скорость к 60 fps: на 120 Гц анимация не становится вдвое быстрее
+  const dt = dtMs / 16.7;
+  animTick += 0.015 * dt;
+
+  // ── Небо: готовая aurora-подложка + батч снежинок одним цветом
   bgCtx.clearRect(0, 0, bgW, bgH);
+  if (!reducedMotion && auroraReady) {
+    const drift = Math.sin(animTick * 0.35) * bgW * 0.06;
+    bgCtx.globalAlpha = 0.9;
+    bgCtx.drawImage(auroraLayer, -Math.max(bgW, bgH) * 0.18 + drift, -bgH * 0.06);
+    bgCtx.globalAlpha = 1;
+  }
 
-  const grad1 = bgCtx.createRadialGradient(
-    bgW * (0.3 + 0.15 * Math.sin(animTick)),
-    bgH * 0.18,
-    10,
-    bgW * 0.5,
-    bgH * 0.25,
-    bgW * 0.85
-  );
-  grad1.addColorStop(0, "rgba(16, 185, 129, 0.16)");
-  grad1.addColorStop(0.5, "rgba(14, 165, 233, 0.10)");
-  grad1.addColorStop(1, "rgba(4, 9, 20, 0)");
-  bgCtx.fillStyle = grad1;
-  bgCtx.fillRect(0, 0, bgW, bgH);
-
+  const buckets = [[], [], []];
   for (const s of bgSnow) {
-    s.y += s.vy;
-    s.x += s.vx + Math.sin(animTick + s.phase) * 0.25;
+    s.y += s.vy * dt;
+    s.x += s.vx * dt + (reducedMotion ? 0 : Math.sin(animTick + s.phase) * 0.25 * dt);
     if (s.y > bgH + 6) {
       s.y = -6;
       s.x = Math.random() * bgW;
     }
     if (s.x > bgW + 6) s.x = -6;
     if (s.x < -6) s.x = bgW + 6;
-
+    // одинаковую прозрачность рисуем одной пачкой — один fill вместо 65
+    buckets[s.alpha > 0.6 ? 0 : s.alpha > 0.42 ? 1 : 2].push(s);
+  }
+  bgCtx.fillStyle = "rgba(255, 255, 255, 0.72)";
+  for (const bucket of buckets) {
+    if (!bucket.length) continue;
     bgCtx.beginPath();
-    bgCtx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-    bgCtx.fillStyle = `rgba(255, 255, 255, ${s.alpha})`;
+    for (const s of bucket) {
+      bgCtx.moveTo(s.x + s.r, s.y);
+      bgCtx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    }
     bgCtx.fill();
   }
 
+  // ── Частицы кликов
   fxCtx.clearRect(0, 0, bgW, bgH);
-  for (let i = fxParticles.length - 1; i >= 0; i--) {
-    const p = fxParticles[i];
-    p.x += p.vx;
-    p.y += p.vy;
-    p.vy += 0.14;
-    p.alpha -= p.decay;
-    if (p.alpha <= 0) {
-      fxParticles.splice(i, 1);
-      continue;
+  if (fxParticles.length) {
+    fxCtx.globalCompositeOperation = "lighter";
+    for (let i = fxParticles.length - 1; i >= 0; i--) {
+      const p = fxParticles[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 0.14 * dt;
+      p.alpha -= p.decay * dt;
+      if (p.alpha <= 0) {
+        fxParticles.splice(i, 1);
+        continue;
+      }
+      const a = Math.max(0, p.alpha);
+      if (glowReady) {
+        const glow = p.size * 4.4;
+        fxCtx.globalAlpha = a * 0.5;
+        fxCtx.drawImage(glowSprite, p.x - glow / 2, p.y - glow / 2, glow, glow);
+      }
+      fxCtx.globalAlpha = a;
+      fxCtx.fillStyle = p.color;
+      if (p.star) {
+        fxCtx.save();
+        fxCtx.translate(p.x, p.y);
+        fxCtx.rotate(p.alpha * 4);
+        fxCtx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+        fxCtx.restore();
+      } else {
+        fxCtx.beginPath();
+        fxCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        fxCtx.fill();
+      }
     }
-    fxCtx.save();
-    fxCtx.globalAlpha = Math.max(0, p.alpha);
-    fxCtx.fillStyle = p.color;
-    fxCtx.shadowColor = p.color;
-    fxCtx.shadowBlur = 8;
-    if (p.star) {
-      fxCtx.translate(p.x, p.y);
-      fxCtx.rotate(p.alpha * 4);
-      fxCtx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
-    } else {
-      fxCtx.beginPath();
-      fxCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-      fxCtx.fill();
-    }
-    fxCtx.restore();
+    fxCtx.globalAlpha = 1;
+    fxCtx.globalCompositeOperation = "source-over";
   }
 
   requestAnimationFrame(animateCanvases);
 }
+rebuildAuroraLayer();
 requestAnimationFrame(animateCanvases);
 
 // ============================================================================
@@ -767,7 +903,7 @@ function getGarlandColors() {
   return ["#fde047", "#f43f5e", "#38bdf8", "#34d399", "#c084fc"];
 }
 
-function drawGarlandLights() {
+function drawGarlandLights(animate = false) {
   const g = $("#garlandLights");
   g.innerHTML = "";
   const colors = getGarlandColors();
@@ -791,15 +927,27 @@ function drawGarlandLights() {
         class: "garland-bulb",
         style: `animation-delay: ${(idx * 0.23).toFixed(2)}s`,
       });
+      if (animate) {
+        bulb.style.opacity = "0";
+        requestAnimationFrame(() => {
+          bulb.style.transition = `opacity 0.35s ease ${(idx * 0.02).toFixed(2)}s`;
+          bulb.style.opacity = "1";
+        });
+      }
       g.appendChild(bulb);
       idx++;
     }
   }
 }
 
-function drawTopStar() {
+function drawTopStar(animate = false) {
   const g = $("#topStar");
   g.innerHTML = "";
+  if (animate) {
+    g.style.opacity = "0";
+    g.style.transition = "opacity 0.4s ease";
+    requestAnimationFrame(() => { g.style.opacity = "1"; });
+  }
   const topper = state.tree?.topper_type || "star";
   g.appendChild(svgEl("circle", { cx: 200, cy: 48, r: 28, fill: "#fde047", opacity: 0.22, filter: "url(#glowFilter)" }));
   if (topper === "crown") {
@@ -832,19 +980,61 @@ function drawTopStar() {
   }
 }
 
+// Плавная смена палитры неба: CSS-переход по stop-color, чтобы тема
+// не «щёлкала» при переключении варианта в модалке.
+function animateSkyTo(theme) {
+  const stops = document.querySelectorAll("#skyGrad stop");
+  if (stops.length < 3 || !theme) return;
+  const targets = [theme.top || "#050b1a", theme.mid || "#0d1b3a", theme.bot || "#172a4f"];
+  stops.forEach((stop, i) => {
+    const current = (stop.getAttribute("stop-color") || "").toLowerCase();
+    if (current === targets[i].toLowerCase()) return;
+    // CSS-свойство stop-color анимируется плавно (переход задан в style.css),
+    // атрибут дублируем, чтобы значение было видно и без поддержки transition.
+    try { stop.style.stopColor = targets[i]; } catch (e) {}
+    stop.setAttribute("stop-color", targets[i]);
+  });
+}
+
 function applyTreeTheme() {
   const bgKey = state.tree?.bg_theme || "aurora";
   const theme = state.treeThemes?.backgrounds?.[bgKey];
-  if (theme) {
-    const stops = document.querySelectorAll("#skyGrad stop");
-    if (stops.length >= 3) {
-      stops[0].setAttribute("stop-color", theme.top || "#050b1a");
-      stops[1].setAttribute("stop-color", theme.mid || "#0d1b3a");
-      stops[2].setAttribute("stop-color", theme.bot || "#172a4f");
-    }
-  }
+  animateSkyTo(theme);
   drawGarlandLights();
   drawTopStar();
+}
+
+// Живой предпросмотр стиля прямо на ёлке: не сохраняем на сервер,
+// а подменяем тему в состоянии и перерисовываем с плавным переходом.
+function previewStyleDraft() {
+  if (!state.styleDraft) return;
+  const draft = state.styleDraft;
+  // Рисуем превью по черновику: функции ниже читают именно эти ключи.
+  // Сохранённое состояние не трогаем — после закрытия модалки без «Сохранить»
+  // ёлка вернётся к прежнему виду через restoreTreeTheme().
+  const preview = {
+    ...(state.tree || {}),
+    bg_theme: draft.bg_theme,
+    garland_style: draft.garland_style,
+    topper_type: draft.topper_type,
+  };
+  const painted = state.tree;
+  state.tree = preview;
+  try {
+    animateSkyTo(state.treeThemes?.backgrounds?.[draft.bg_theme]);
+    drawGarlandLights(true);
+    drawTopStar(true);
+  } finally {
+    state.tree = painted;
+  }
+}
+
+// Возврат ёлки к сохранённому стилю (закрытие модалки без сохранения)
+function restoreTreeTheme() {
+  const theme = state.treeThemes?.backgrounds?.[state.tree?.bg_theme || "aurora"];
+  animateSkyTo(theme);
+  drawGarlandLights(true);
+  drawTopStar(true);
 }
 
 function starShape(cx, cy, r, fillColor, strokeColor = "#b45309") {
@@ -949,6 +1139,11 @@ function ornamentShape(type, colorName, colorHex, x, y) {
   return g;
 }
 
+// Какие игрушки уже показывали — чтобы анимация «падения» срабатывала
+// только у новых, а не при каждом обновлении ёлки раз в 12 секунд.
+const seenDecorations = new Set();
+let decorationsRendered = false;
+
 function renderDecorations() {
   decorLayer.innerHTML = "";
   for (const d of state.decorations) {
@@ -957,6 +1152,10 @@ function renderDecorations() {
     const y = (d.y / 100) * 500;
     const el = ornamentShape(d.ornament_type, d.color, colorHex, x, y);
     el.dataset.id = d.id;
+    if (decorationsRendered && !seenDecorations.has(String(d.id))) {
+      el.classList.add("dec-new");
+    }
+    seenDecorations.add(String(d.id));
     // Индикатор пожелания 💌
     if (d.wish_text && String(d.wish_text).trim()) {
       const badge = svgEl("text", {
@@ -1014,6 +1213,7 @@ function renderDecorations() {
     decorLayer.appendChild(el);
   }
   $("#counter").textContent = `✨ На ёлке: ${state.decorations.length}`;
+  decorationsRendered = true;
 }
 
 async function saveMoveDecoration(decorationId, x, y) {
@@ -1771,9 +1971,6 @@ async function refreshTreeData(inviteOverride = "") {
   state.treeThemes = data.tree_themes || state.treeThemes;
   state.lootboxPrice = Number(data.lootbox_price || 100);
   if (Array.isArray(data.lootbox_pool) && data.lootbox_pool.length) state.lootboxPool = data.lootbox_pool;
-  if (Array.isArray(data.nft_catalog)) state.nftCatalog = data.nft_catalog;
-  if (Array.isArray(data.nft_gifts)) state.nftGifts = data.nft_gifts;
-  state.nftMintEnabled = !!data.nft_mint_enabled;
   state.adventRewards = data.advent_rewards || state.adventRewards;
   state.decorations = data.decorations || [];
   state.stats = data.stats || [];
@@ -1801,8 +1998,6 @@ async function refreshTreeData(inviteOverride = "") {
   renderDonateShop();
   renderDecorations();
   renderLeaderboard();
-  renderPostcardGifts(data.nft_gifts || []);
-  schedulePostcardRefresh();
   saveBackup();
 }
 
@@ -1930,265 +2125,24 @@ treeSvg.addEventListener("click", async (e) => {
   }
 });
 
-// ============================================================================
-// 12. ИТОГОВАЯ ОТКРЫТКА: живое превью, скачивание, шаринг и NFT-подарки
-// ============================================================================
-let postcardTimer = null;
-let postcardLoading = false;
-let postcardBlobUrl = null;
-
-function postcardUrl() {
-  return `/api/final-image/${requestChatId()}?user_id=${currentUser.id}&t=${Date.now()}`;
-}
-
-function renderPostcardGifts(gifts) {
-  const boxes = [$("#postcardGifts"), $("#previewGifts")].filter(Boolean);
-  for (const box of boxes) {
-    box.innerHTML = "";
-    const list = Array.isArray(gifts) ? gifts : [];
-    if (!list.length) {
-      box.innerHTML = `<div class="gift-empty">🎁 Подарков пока нет — прикрепи NFT-подарок к открытке, и он появится на ней.</div>`;
-      continue;
-    }
-    for (const g of list.slice(0, 6)) {
-      const card = document.createElement("div");
-      card.className = "gift-chip";
-      card.innerHTML = `
-        <span class="gift-emoji">${g.emoji || "🎁"}</span>
-        <span class="gift-meta">
-          <b>${escapeHtml(g.title || "NFT-подарок")}</b>
-          <small>от ${escapeHtml(g.from_name || "друга")}</small>
-        </span>
-      `;
-      box.appendChild(card);
-    }
-  }
-}
-
-async function loadPostcard(force = false) {
-  const img = $("#postcardImg");
-  const skeleton = $("#postcardSkeleton");
-  if (!img || postcardLoading) return;
-  postcardLoading = true;
-  try {
-    const res = await fetch(postcardUrl(), { cache: "no-store" });
-    if (!res.ok) throw new Error("Не удалось собрать открытку");
-    const blob = await res.blob();
-    if (postcardBlobUrl) URL.revokeObjectURL(postcardBlobUrl);
-    postcardBlobUrl = URL.createObjectURL(blob);
-    img.src = postcardBlobUrl;
-    img.classList.add("loaded");
-    skeleton?.classList.add("hidden");
-  } catch (e) {
-    if (skeleton) {
-      skeleton.textContent = "Не удалось собрать открытку 😢 Нажми 🔄";
-      skeleton.classList.remove("hidden");
-    }
-  } finally {
-    postcardLoading = false;
-  }
-}
-
-function schedulePostcardRefresh() {
-  clearTimeout(postcardTimer);
-  postcardTimer = setTimeout(() => loadPostcard(), 1200);
-}
-
-async function downloadPostcard() {
-  try {
-    haptic("medium");
-    const blob = postcardBlobUrl ? await (await fetch(postcardBlobUrl)).blob() : await (await fetch(postcardUrl())).blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `newyear-tree-${Date.now()}.png`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
-    toast("Открытка сохранена! 🖼");
-  } catch (e) {
-    toast("Не удалось скачать открытку", true);
-  }
-}
-
-async function sharePostcard() {
-  const text = "🎄 Наша новогодняя ёлка! С Новым годом!";
-  haptic("light");
-  try {
-    const blob = await (await fetch(postcardUrl())).blob();
-    const file = new File([blob], "newyear-tree.png", { type: "image/png" });
-    if (navigator.canShare?.({ files: [file] })) {
-      await navigator.share({ files: [file], text });
-      return;
-    }
-  } catch (e) {}
-  const link = `${state.webappUrl || window.location.origin}`;
-  const shareLink = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
-  if (tg?.openTelegramLink) {
-    tg.openTelegramLink(shareLink);
-  } else {
-    try {
-      await navigator.clipboard.writeText(link);
-      toast("Ссылка на ёлку скопирована 📋");
-    } catch (e) {
-      toast(link);
-    }
-  }
-}
-
-function openPostcardFullscreen() {
-  $("#previewImg").src = $("#postcardImg")?.src || postcardUrl();
-  $("#previewModal").classList.remove("hidden");
-}
-
-$("#previewBtn")?.addEventListener("click", openPostcardFullscreen);
-$("#postcardOpenBtn")?.addEventListener("click", openPostcardFullscreen);
-$("#postcardRefreshBtn")?.addEventListener("click", () => {
-  haptic("light");
-  loadPostcard(true);
-});
-// ── NFT-подарки ────────────────────────────────────────────────────────────
-function renderNftCatalog() {
-  const box = $("#nftCatalog");
-  if (!box) return;
-  const catalog = Array.isArray(state.nftCatalog) ? state.nftCatalog : [];
-  box.innerHTML = "";
-  const rarityNames = {
-    common: "обычный",
-    rare: "редкий",
-    epic: "эпический",
-    legendary: "легендарный",
-    mythic: "мифический",
-  };
-  for (const item of catalog) {
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = "nft-card" + (Number(state.nftDraftToken) === Number(item.token_id) ? " selected" : "");
-    card.innerHTML = `
-      <span class="nft-emoji">${item.emoji}</span>
-      <span class="nft-meta">
-        <b>${escapeHtml(item.title)}</b>
-        <small>${escapeHtml(item.subtitle || "")} · ${rarityNames[item.rarity] || item.rarity}</small>
-      </span>
-    `;
-    card.onclick = () => {
-      state.nftDraftToken = Number(item.token_id);
-      haptic("light");
-      renderNftCatalog();
-    };
-    box.appendChild(card);
-  }
-}
-
-function renderNftRecipients() {
-  const box = $("#nftToOptions");
-  if (!box) return;
-  box.innerHTML = "";
-  const members = (state.members || []).filter((m) => Number(m.user_id) !== Number(state.myUserId));
-  if (!members.length) {
-    box.innerHTML = `<div class="gift-empty">Нет других участников: введи ID друга вручную ниже 👇</div>`;
-    return;
-  }
-  for (const m of members) {
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = "nft-to-chip" + (Number(state.nftDraftTo) === Number(m.user_id) ? " selected" : "");
-    chip.textContent = `${m.first_name || "Друг"} (#${m.user_id})`;
-    chip.onclick = () => {
-      state.nftDraftTo = Number(m.user_id);
-      $("#nftToInput").value = String(m.user_id);
-      haptic("light");
-      renderNftRecipients();
-    };
-    box.appendChild(chip);
-  }
-}
-
-function openNftGiftModal() {
-  if (!Array.isArray(state.nftCatalog) || !state.nftCatalog.length) {
-    toast("Коллекция подарков ещё не загружена", true);
-    return;
-  }
-  state.nftDraftToken = state.nftDraftToken || Number(state.nftCatalog[0].token_id);
-  renderNftRecipients();
-  renderNftCatalog();
-  $("#nftGiftModal").classList.remove("hidden");
-}
-
-async function sendNftGift() {
-  const toUserId = Number($("#nftToInput").value || state.nftDraftTo || 0);
-  if (!toUserId) {
-    toast("Укажи, кому подарить (ID друга)", true);
-    return;
-  }
-  if (!state.nftDraftToken) {
-    toast("Выбери подарок из коллекции", true);
-    return;
-  }
-  try {
-    const res = await fetch("/api/nft-gifts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        to_user_id: toUserId,
-        token_id: Number(state.nftDraftToken),
-        message: ($("#nftMessageInput").value || "").trim(),
-        init_data: initData,
-        user: currentUser,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "Не удалось прикрепить подарок");
-    haptic("heavy");
-    toast(`Подарок «${data.item?.title || "NFT"}» прикреплён к открытке! 🎁`);
-    $("#nftGiftModal").classList.add("hidden");
-    $("#nftMessageInput").value = "";
-    await refreshTreeData();
-    loadPostcard(true);
-  } catch (err) {
-    toast(err.message || "Не удалось отправить подарок", true);
-  }
-}
-
-$("#postcardGiftBtn")?.addEventListener("click", openNftGiftModal);
-$("#closeNftGiftModalBtn")?.addEventListener("click", () => $("#nftGiftModal").classList.add("hidden"));
-$("#nftGiftModal")?.addEventListener("click", (e) => {
-  if (e.target === $("#nftGiftModal")) $("#nftGiftModal").classList.add("hidden");
-});
-$("#sendNftGiftBtn")?.addEventListener("click", sendNftGift);
-
-$("#postcardDownloadBtn")?.addEventListener("click", downloadPostcard);
-$("#previewDownloadBtn")?.addEventListener("click", downloadPostcard);
-$("#postcardShareBtn")?.addEventListener("click", sharePostcard);
-$("#previewShareBtn")?.addEventListener("click", sharePostcard);
-
-$("#closeModalBtn").addEventListener("click", () => {
-  $("#previewModal").classList.add("hidden");
-});
-
-$("#previewModal").addEventListener("click", (e) => {
-  if (e.target === $("#previewModal")) {
-    $("#previewModal").classList.add("hidden");
-  }
-});
-
-// --- v7: Адвент, стиль, рефералка, игрушка, лутбокс ---
-$("#dailyGiftBtn").addEventListener("click", () => {
-  renderAdventModal();
-  $("#adventModal").classList.remove("hidden");
-});
-$("#closeAdventModalBtn").addEventListener("click", () => $("#adventModal").classList.add("hidden"));
-$("#adventModal").addEventListener("click", (e) => { if (e.target === $("#adventModal")) $("#adventModal").classList.add("hidden"); });
 $("#claimDailyBtn").addEventListener("click", claimDailyAdvent);
 
 $("#openStyleModalBtn").addEventListener("click", () => {
   resetStyleDraft();
   renderStyleModal(false);
   $("#styleModal").classList.remove("hidden");
+  haptic("light");
 });
-$("#closeStyleModalBtn").addEventListener("click", () => $("#styleModal").classList.add("hidden"));
-$("#styleModal").addEventListener("click", (e) => { if (e.target === $("#styleModal")) $("#styleModal").classList.add("hidden"); });
+$("#closeStyleModalBtn").addEventListener("click", () => {
+  $("#styleModal").classList.add("hidden");
+  restoreTreeTheme();
+});
+$("#styleModal").addEventListener("click", (e) => {
+  if (e.target === $("#styleModal")) {
+    $("#styleModal").classList.add("hidden");
+    restoreTreeTheme();
+  }
+});
 $("#saveStyleBtn").addEventListener("click", saveTreeStyle);
 
 $("#shareReferralBtn").addEventListener("click", shareReferral);
@@ -2200,6 +2154,27 @@ $("#removeOrnamentBtn").addEventListener("click", removeActiveOrnament);
 $("#closeLootboxModalBtn").addEventListener("click", () => $("#lootboxModal").classList.add("hidden"));
 $("#lootboxOkBtn").addEventListener("click", () => $("#lootboxModal").classList.add("hidden"));
 $("#lootboxModal").addEventListener("click", (e) => { if (e.target === $("#lootboxModal")) $("#lootboxModal").classList.add("hidden"); });
+
+// Пока открыт любой модал, страница под ним не прокручивается: иначе на
+// телефоне фон «резинит» под оверлеем и это читается как рывок интерфейса.
+const MODAL_SELECTORS = ["#teamModal", "#styleModal", "#ornamentModal", "#lootboxModal"];
+
+function syncModalScrollLock() {
+  const anyOpen = MODAL_SELECTORS.some((sel) => {
+    const el = $(sel);
+    return el && !el.classList.contains("hidden");
+  });
+  document.body.classList.toggle("modal-open", anyOpen);
+}
+
+if (typeof MutationObserver === "function") {
+  const modalObserver = new MutationObserver(syncModalScrollLock);
+  MODAL_SELECTORS.forEach((sel) => {
+    const el = $(sel);
+    if (el) modalObserver.observe(el, { attributes: true, attributeFilter: ["class"] });
+  });
+  syncModalScrollLock();
+}
 
 drawSnowAndStars();
 drawGarlandLights();
