@@ -6,11 +6,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-# Адрес кошелька TON/GRAM для приёма донатов в GRAM (можно задать в Environment Variables)
-GRAM_WALLET_ADDRESS = os.getenv(
-    "GRAM_WALLET_ADDRESS",
-    "UQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJKZ",
-).strip()
 
 
 def _detect_webapp_url() -> str:
@@ -50,6 +45,28 @@ DATABASE_PATH = (
 )
 
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
+
+# --- Идентификаторы ёлок -------------------------------------------------
+# Личная ёлка игрока: chat_id = -(PERSONAL_TREE_BASE + user_id).
+# Диапазон не пересекается ни с групповыми чатами (~ -1e12), ни с командами (~ -9e8),
+# и остаётся безопасным целым для JavaScript (|id| < 2^53).
+PERSONAL_TREE_BASE = 4_000_000_000_000_000
+# Номер «общей» ёлки из старых версий — теперь это «моя личная ёлка»
+LEGACY_SHARED_TREE_ID = 1
+
+
+def personal_tree_id(user_id: int) -> int:
+    """Возвращает chat_id личной ёлки игрока."""
+    return -(PERSONAL_TREE_BASE + int(user_id))
+
+
+def is_personal_tree_id(chat_id: int) -> bool:
+    return int(chat_id) <= -PERSONAL_TREE_BASE
+
+
+def personal_tree_owner(chat_id: int) -> int:
+    """Восстанавливает user_id владельца по id личной ёлки."""
+    return abs(int(chat_id)) - PERSONAL_TREE_BASE
 
 # Типы игрушек, их цвета и цена в монетах
 ORNAMENTS = {
@@ -158,7 +175,7 @@ TREE_THEMES = {
 
 LOOTBOX_PRICE = 150
 
-# Донат-наборы за Telegram Stars (XTR) и криптовалюту GRAM (цены в GRAM снижены в 5 раз)
+# Донат-наборы за Telegram Stars (XTR). Оплата в GRAM отключена.
 DONATE_PACKS = {
     "coins_small": {
         "id": "coins_small",
@@ -166,7 +183,6 @@ DONATE_PACKS = {
         "emoji": "🪙",
         "description": "+500 новогодних монет для покупки игрушек",
         "stars_price": 15,
-        "gram_price": 1,
         "rewards": {
             "coins": 500,
             "items": {},
@@ -179,7 +195,6 @@ DONATE_PACKS = {
         "emoji": "💰",
         "description": "+2 500 новогодних монет и +1 к силе клика",
         "stars_price": 50,
-        "gram_price": 3,
         "rewards": {
             "coins": 2500,
             "items": {},
@@ -192,7 +207,6 @@ DONATE_PACKS = {
         "emoji": "💎",
         "description": "+10 000 монет и +3 к силе клика",
         "stars_price": 150,
-        "gram_price": 9,
         "rewards": {
             "coins": 10000,
             "items": {},
@@ -205,7 +219,6 @@ DONATE_PACKS = {
         "emoji": "🎁",
         "description": "3 Шара, 2 Конфеты, 2 Снежинки, 2 Подарка и 1 Звезда",
         "stars_price": 35,
-        "gram_price": 2,
         "rewards": {
             "coins": 100,
             "items": {
@@ -224,7 +237,6 @@ DONATE_PACKS = {
         "emoji": "👑",
         "description": "По 5 игрушек каждого вида + 3 000 монет + Сила клика +2",
         "stars_price": 100,
-        "gram_price": 6,
         "rewards": {
             "coins": 3000,
             "items": {

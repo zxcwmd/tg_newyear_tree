@@ -986,7 +986,7 @@ header h1 {
 }
 
 .pay-stars-btn,
-.pay-gram-btn {
+.pay-crypto-legacy-btn {
   padding: 10px 8px;
   border-radius: 12px;
   border: none;
@@ -1001,7 +1001,7 @@ header h1 {
   box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
 }
 
-.pay-gram-btn {
+.pay-crypto-legacy-btn {
   background: linear-gradient(135deg, #0ea5e9, #2563eb);
   box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
 }
@@ -1110,7 +1110,7 @@ header h1 {
   margin-bottom: 8px;
 }
 
-.gram-desc {
+.field-desc {
   font-size: 13px;
   color: #cbd5e1;
   margin-bottom: 10px;
@@ -1130,7 +1130,7 @@ header h1 {
   color: #38bdf8;
 }
 
-.gram-label {
+.field-label {
   display: block;
   font-size: 11px;
   color: #94a3b8;
@@ -1191,7 +1191,7 @@ header h1 {
   margin-top: 12px;
 }
 
-.gram-pay-link {
+.primary-link-btn {
   display: block;
   text-align: center;
   text-decoration: none;
@@ -1203,7 +1203,7 @@ header h1 {
   font-size: 13.5px;
 }
 
-.confirm-gram-btn {
+.primary-btn {
   padding: 11px;
   border-radius: 12px;
   border: none;
@@ -1396,3 +1396,234 @@ header h1 {
 .lootbox-card .s-title { font-weight: 800; font-size: 15px; margin: 6px 0 4px; }
 .lootbox-card p { font-size: 12px; opacity: 0.85; margin: 4px 0 10px; }
 .wish-badge { pointer-events: none; }
+
+/* ==========================================================================
+   v8: человечки-участники сбора ёлки и панель команды
+   ========================================================================== */
+.crowd-panel {
+  margin-top: 10px;
+  padding: 12px;
+}
+
+.crowd-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.crowd-title {
+  font-size: 13.5px;
+  font-weight: 800;
+}
+
+.crowd-invite-btn {
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  border: none;
+  color: #fff;
+  font-weight: 800;
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
+}
+
+.crowd-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 4px;
+  min-height: 62px;
+  padding: 6px 2px 0;
+  overflow: hidden;
+}
+
+.crowd-figure {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  animation: crowd-pop 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes crowd-pop {
+  from { transform: translateY(10px) scale(0.7); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.crowd-person {
+  position: relative;
+  width: 26px;
+  height: 42px;
+  animation: crowd-bob 2.6s ease-in-out infinite;
+  transform-origin: bottom center;
+}
+
+@keyframes crowd-bob {
+  0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+  50% { transform: translateY(-2px) rotate(1.5deg); }
+}
+
+.crowd-person .person-head {
+  position: absolute;
+  left: 50%;
+  bottom: 17px;
+  width: 13px;
+  height: 13px;
+  margin-left: -6.5px;
+  border-radius: 50%;
+  background: #fde0c7;
+  box-shadow: inset -2px -1px 0 rgba(0, 0, 0, 0.08);
+}
+
+.crowd-person .person-head::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 5px;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: #1e293b;
+  box-shadow: 5px 0 0 #1e293b;
+}
+
+.crowd-person .person-hat {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  width: 16px;
+  height: 12px;
+  margin-left: -8px;
+  border-radius: 8px 8px 2px 2px;
+  background: var(--hat, #dc2626);
+  clip-path: polygon(0% 100%, 100% 100%, 62% 0%);
+}
+
+.crowd-person .person-hat::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  bottom: 0;
+  height: 4px;
+  border-radius: 3px;
+  background: #fff;
+}
+
+.crowd-person .person-hat::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: -4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.crowd-person .person-body {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 20px;
+  height: 20px;
+  margin-left: -10px;
+  border-radius: 8px 8px 5px 5px;
+  background: var(--hat, #dc2626);
+}
+
+.crowd-person .person-body::after {
+  content: "";
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  bottom: 0;
+  height: 5px;
+  border-radius: 4px;
+  background: #fff;
+  opacity: 0.92;
+}
+
+.hat-hue-0 { --hat: #dc2626; }
+.hat-hue-1 { --hat: #2563eb; }
+.hat-hue-2 { --hat: #16a34a; }
+.hat-hue-3 { --hat: #a855f7; }
+.hat-hue-4 { --hat: #ea580c; }
+.hat-hue-5 { --hat: #0d9488; }
+
+.crowd-figure.is-me .crowd-person {
+  filter: drop-shadow(0 0 7px rgba(253, 224, 71, 0.85));
+}
+
+.crowd-name {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #cbd5e1;
+  max-width: 46px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crowd-more .crowd-badge {
+  width: 30px;
+  height: 30px;
+  margin-bottom: 12px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(250, 204, 21, 0.16);
+  border: 1px dashed rgba(250, 204, 21, 0.6);
+  color: #fde047;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.crowd-hint {
+  margin-top: 8px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.team-members-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #93c5fd;
+  margin-bottom: 6px;
+}
+
+.donate-btns-single {
+  grid-template-columns: 1fr;
+}
+
+/* v8: панель команды */
+.team-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.team-bar-top {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.team-share-row {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.team-share-row.hidden {
+  display: none;
+}

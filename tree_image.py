@@ -156,6 +156,115 @@ def _draw_crystal(draw, x, y, color_hex):
     draw.polygon([(x, y - 10), (x + 6, y), (x, y + 10), (x - 6, y)], fill=(255, 255, 255, 180))
 
 
+HAT_COLORS = [
+    (220, 38, 38),    # красная
+    (37, 99, 235),    # синяя
+    (22, 163, 74),    # зелёная
+    (168, 85, 247),   # фиолетовая
+    (234, 88, 12),    # оранжевая
+    (13, 148, 136),   # бирюзовая
+]
+SKIN_COLOR = (253, 224, 199)
+
+
+def _draw_person(draw: ImageDraw.ImageDraw, cx: float, cy: float, hat_rgb, scale: float = 1.0):
+    """Маленький человечек в новогодней шапочке (cy — низ ног)."""
+    s = scale
+    body_w = 13 * s
+    body_h = 20 * s
+    head_r = 8 * s
+    # Тень
+    draw.ellipse(
+        [cx - 12 * s, cy - 3 * s, cx + 12 * s, cy + 2 * s],
+        fill=(2, 6, 23, 90),
+    )
+    # Туловище (шуба)
+    draw.rounded_rectangle(
+        [cx - body_w / 2, cy - body_h, cx + body_w / 2, cy - 2 * s],
+        radius=4 * s,
+        fill=hat_rgb,
+    )
+    # Меховая опушка
+    draw.rounded_rectangle(
+        [cx - body_w / 2 - 1 * s, cy - 6 * s, cx + body_w / 2 + 1 * s, cy - 2 * s],
+        radius=2 * s,
+        fill=(255, 255, 255),
+    )
+    # Голова
+    head_y = cy - body_h - head_r * 0.75
+    draw.ellipse(
+        [cx - head_r, head_y - head_r, cx + head_r, head_y + head_r],
+        fill=SKIN_COLOR,
+    )
+    # Глазки
+    draw.ellipse([cx - 3.4 * s, head_y - 1.5 * s, cx - 1.6 * s, head_y + 0.4 * s], fill=(30, 41, 59))
+    draw.ellipse([cx + 1.6 * s, head_y - 1.5 * s, cx + 3.4 * s, head_y + 0.4 * s], fill=(30, 41, 59))
+    # Улыбка
+    draw.arc(
+        [cx - 3 * s, head_y + 0.5 * s, cx + 3 * s, head_y + 4.5 * s],
+        start=15, end=165, fill=(120, 53, 15), width=max(1, int(1.4 * s)),
+    )
+    # Новогодняя шапочка с помпоном
+    hat_top = head_y - head_r * 2.1
+    draw.polygon(
+        [
+            (cx - head_r * 1.05, head_y - head_r * 0.55),
+            (cx + head_r * 1.05, head_y - head_r * 0.55),
+            (cx + head_r * 0.15, hat_top),
+        ],
+        fill=hat_rgb,
+    )
+    draw.rounded_rectangle(
+        [cx - head_r * 1.12, head_y - head_r * 0.78, cx + head_r * 1.12, head_y - head_r * 0.36],
+        radius=2.4 * s,
+        fill=(255, 255, 255),
+    )
+    draw.ellipse(
+        [cx + head_r * 0.02, hat_top - 3.6 * s, cx + head_r * 0.75, hat_top + 3.2 * s],
+        fill=(255, 255, 255),
+    )
+
+
+def _draw_crowd(draw: ImageDraw.ImageDraw, members: list[dict], count: int):
+    """Рисует человечков под ёлкой: до 8 фигурок + бейдж «+N», если участников больше."""
+    if count <= 0:
+        return
+    ground_y = 924
+    if count <= 8:
+        per_row, rows = count, 1
+    elif count <= 16:
+        per_row, rows = (count + 1) // 2, 2
+    else:
+        per_row, rows = 8, 2
+
+    shown = min(count, per_row * rows)
+    total_width = W * 0.74
+    step = total_width / (per_row + 0.6)
+    start_x = W / 2 - (per_row - 1) * step / 2
+
+    for idx in range(shown):
+        row = idx // per_row
+        col = idx % per_row
+        x = start_x + col * step + (step * 0.5 if row % 2 else 0)
+        y = ground_y - row * 30
+        member = members[idx] if idx < len(members) else {}
+        hat = HAT_COLORS[(member.get("user_id") or idx) % len(HAT_COLORS)]
+        _draw_person(draw, x, y, hat, scale=0.95 if rows == 1 else 0.8)
+
+    if count > shown:
+        badge_x, badge_y = W - 74, ground_y - 34
+        draw.ellipse([badge_x - 26, badge_y - 26, badge_x + 26, badge_y + 26], fill=(250, 204, 21))
+        font = _load_font(22)
+        text = f"+{count - shown}"
+        bbox = draw.textbbox((0, 0), text, font=font)
+        draw.text(
+            (badge_x - (bbox[2] - bbox[0]) / 2, badge_y - (bbox[3] - bbox[1]) / 2 - 3),
+            text,
+            fill=(69, 26, 3),
+            font=font,
+        )
+
+
 DRAWERS = {
     "ball": _draw_ball,
     "star": lambda d, x, y, c: _draw_star(d, x, y, 20, _hex_to_rgb(c)),
@@ -168,8 +277,15 @@ DRAWERS = {
 }
 
 
-def generate_tree_image(decorations: list[dict], title: str = "Новогодняя ёлка") -> bytes:
-    """Генерирует PNG ёлки со всеми игрушками. x,y — относительные 0..100."""
+def generate_tree_image(
+    decorations: list[dict],
+    title: str = "Новогодняя ёлка",
+    members: list[dict] | None = None,
+) -> bytes:
+    """Генерирует PNG ёлки со всеми игрушками. x,y — относительные 0..100.
+
+    members — участники сбора: под ёлкой рисуются человечки в шапочках.
+    """
     img = Image.new("RGB", (W, H), BG_TOP)
     draw = ImageDraw.Draw(img, "RGBA")
     _draw_background(draw)
@@ -184,12 +300,15 @@ def generate_tree_image(decorations: list[dict], title: str = "Новогодн�
         fn = DRAWERS.get(otype, _draw_ball)
         fn(draw, x, y, color_hex)
 
+    # Человечки-участники в шапочках под ёлкой
+    _draw_crowd(draw, members or [], len(members or []))
+
     # Заголовок внизу
-    font = _load_font(36)
+    font = _load_font(30)
     text = title
     bbox = draw.textbbox((0, 0), text, font=font)
     tw = bbox[2] - bbox[0]
-    draw.text(((W - tw) / 2, H - 60), text, fill=(255, 255, 255), font=font)
+    draw.text(((W - tw) / 2, H - 44), text, fill=(255, 255, 255), font=font)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")

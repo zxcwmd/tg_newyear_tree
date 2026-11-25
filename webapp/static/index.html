@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Новогодняя ёлка 🎄</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=7">
+<link rel="stylesheet" href="/static/style.css?v=8">
 </head>
 <body>
 <canvas id="bgCanvas"></canvas>
@@ -60,13 +60,14 @@
     <div class="team-bar glass-panel">
       <div class="team-bar-top">
         <select id="treeSwitcher" class="tree-select">
-          <option value="1">🌍 Общая новогодняя ёлка</option>
+          <option value="personal">🎄 Моя ёлка</option>
         </select>
-        <button id="openTeamModalBtn" class="team-action-btn" type="button">👥 + С друзьями</button>
+        <button id="inviteTeamBtn" class="team-action-btn" type="button">👥 Позвать друзей</button>
       </div>
       <div id="teamShareRow" class="team-share-row hidden">
         <span id="teamCodeLabel" class="team-code-label">Командная ёлка</span>
-        <button id="shareTeamBtn" class="share-team-btn" type="button">🔗 Пригласить друзей</button>
+        <button id="shareTeamBtn" class="share-team-btn" type="button">🔗 Скопировать ссылку</button>
+        <button id="joinByCodeBtn" class="share-team-btn" type="button">🔑 Войти по ссылке</button>
       </div>
     </div>
 
@@ -234,6 +235,16 @@
       <div id="hint" class="hint">Выбери сегмент ёлки сверху (Верх / Середина / Низ), чтобы приблизить ветки! 👇</div>
     </div>
 
+    <!-- Человечки-участники сбора ёлки -->
+    <div id="crowdPanel" class="crowd-panel glass-panel">
+      <div class="crowd-head">
+        <span id="crowdTitle" class="crowd-title">🎄 Наряжаешь один</span>
+        <button id="crowdInviteBtn" class="crowd-invite-btn" type="button">+ Позвать друзей</button>
+      </div>
+      <div id="crowdRow" class="crowd-row"></div>
+      <p id="crowdHint" class="crowd-hint">Пока ты играешь один — ёлка только твоя. Позови друга, и появятся человечки в шапочках 👇</p>
+    </div>
+
     <!-- Ежедневный подарок, стиль ёлки и рефералка -->
     <div class="daily-row glass-panel">
       <button id="dailyGiftBtn" class="daily-gift-btn" type="button">
@@ -343,16 +354,16 @@
     <div id="shopGrid" class="shop-grid"></div>
   </section>
 
-  <!-- ВКЛАДКА 5: ДОНАТ-МАГАЗИН (STARS & GRAM) -->
+  <!-- ВКЛАДКА 5: ДОНАТ-МАГАЗИН (TELEGRAM STARS) -->
   <section id="tab-donate" class="tab-panel">
     <div class="donate-header-card glass-panel">
       <h2>💎 Премиум и Донат</h2>
-      <p>Выгодные наборы за <b>Telegram Stars ⭐️</b> или <b>GRAM 💎</b> (цены в GRAM снижены в 5 раз + автовыдача сразу после оплаты!)</p>
+      <p>Выгодные наборы за <b>Telegram Stars ⭐️</b> — награды зачисляются сразу после оплаты.</p>
     </div>
     <div id="donateList" class="donate-list"></div>
   </section>
 
-  <!-- Модалка создания / подключения к командной ёлке -->
+  <!-- Модалка командной ёлки: ссылка от бота + вход по коду -->
   <div id="teamModal" class="modal hidden">
     <div class="modal-card glass-panel">
       <div class="modal-header">
@@ -360,30 +371,29 @@
         <button id="closeTeamModalBtn" class="close-btn" type="button">✕</button>
       </div>
       <div class="team-modal-body">
-        <p class="gram-desc">Создай свою командную ёлку, отправь ссылку друзьям и соревнуйтесь в рейтинге <b>«🌲 Командные ёлки»</b>!</p>
-        <label class="gram-label">Название вашей команды / ёлки:</label>
-        <input id="teamNameInput" class="text-input" type="text" placeholder="Например: Новогодняя банда 🎄" maxlength="40" />
-        <button id="createTeamBtn" class="confirm-gram-btn" type="button" style="width:100%; margin-bottom:14px;">
-          ✨ Создать командную ёлку
+        <p class="field-desc">Ссылку для друзей генерирует <b>бот</b>. Отправь её другу — он откроет бота и попадёт на вашу общую ёлку. Игрушки, монеты и прогресс у каждого свои 🌲</p>
+        <button id="createTeamBtn" class="primary-btn" type="button" style="width:100%; margin-bottom:14px;">
+          🔗 Получить ссылку-приглашение от бота
         </button>
 
-        <div class="divider-line"><span>или войти по коду / ссылке друга</span></div>
-
-        <label class="gram-label">Код или ссылка приглашения:</label>
-        <div class="join-row">
-          <input id="joinCodeInput" class="text-input" type="text" placeholder="team_xxxxxx" />
-          <button id="joinTeamBtn" class="join-btn" type="button">Войти</button>
-        </div>
-
         <div id="createdInviteBox" class="invite-result-box hidden">
-          <div class="invite-title">🎉 Командная ёлка готова! Отправь ссылку друзьям:</div>
+          <div class="invite-title">🎉 Ссылка готова! Отправь её другу:</div>
+          <div id="teamMembersLabel" class="team-members-label">Участников: 1</div>
           <div class="wallet-box">
             <code id="teamInviteLinkCode"></code>
             <button id="copyTeamLinkBtn" class="copy-btn" type="button">📋</button>
           </div>
-          <button id="tgShareTeamBtn" class="gram-pay-link" type="button" style="width:100%; border:none; cursor:pointer;">
-            📤 Отправить приглашение друзьям в Telegram
+          <button id="tgShareTeamBtn" class="primary-link-btn" type="button" style="width:100%; border:none; cursor:pointer;">
+            📤 Отправить приглашение другу в Telegram
           </button>
+        </div>
+
+        <div class="divider-line"><span>или войти в команду друга</span></div>
+
+        <label class="field-label">Ссылка-приглашение или код:</label>
+        <div class="join-row">
+          <input id="joinCodeInput" class="text-input" type="text" placeholder="https://t.me/… или team_xxxxxx" />
+          <button id="joinTeamBtn" class="join-btn" type="button">Войти</button>
         </div>
       </div>
     </div>
@@ -400,38 +410,6 @@
     </div>
   </div>
 
-  <!-- Модалка оплаты GRAM с автовыдачей -->
-  <div id="gramModal" class="modal hidden">
-    <div class="modal-card glass-panel">
-      <div class="modal-header">
-        <span id="gramModalTitle">💎 Оплата в криптовалюте GRAM</span>
-        <button id="closeGramModalBtn" class="close-btn" type="button">✕</button>
-      </div>
-      <div class="gram-body">
-        <p id="gramPackDesc" class="gram-desc"></p>
-        <div class="gram-price-box">
-          К оплате (скидка -80%): <b id="gramAmountText">1 GRAM</b>
-        </div>
-        <label class="gram-label">Кошелёк получателя (TON / GRAM):</label>
-        <div class="wallet-box">
-          <code id="gramWalletCode"></code>
-          <button id="copyWalletBtn" class="copy-btn" type="button">📋</button>
-        </div>
-        <label class="gram-label">Комментарий (MEMO) для автовыдачи:</label>
-        <div class="wallet-box">
-          <code id="gramMemoCode"></code>
-        </div>
-        <div id="gramAutoStatus" class="auto-status-box hidden">
-          <span class="spinner-dot">⏳</span>
-          <span id="gramAutoStatusText">Ожидание оплаты... Набор выдастся автоматически!</span>
-        </div>
-        <div class="gram-actions">
-          <a id="gramDeepLink" href="#" target="_blank" class="gram-pay-link">💎 Оплатить в кошельке (Автовыдача)</a>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <!-- Модалка Адвент-календаря -->
   <div id="adventModal" class="modal hidden">
     <div class="modal-card glass-panel">
@@ -440,10 +418,10 @@
         <button id="closeAdventModalBtn" class="close-btn" type="button">✕</button>
       </div>
       <div class="advent-body">
-        <p class="gram-desc">Открывай подарок под ёлкой каждый день! Серия дней подряд даёт всё больше монет и редкие игрушки.</p>
+        <p class="field-desc">Открывай подарок под ёлкой каждый день! Серия дней подряд даёт всё больше монет и редкие игрушки.</p>
         <div id="adventStreakLabel" class="advent-streak">Твоя серия: 0 дн.</div>
         <div id="adventGrid" class="advent-grid"></div>
-        <button id="claimDailyBtn" class="confirm-gram-btn" type="button" style="width:100%; margin-top:12px;">🎁 Открыть сегодняшний подарок</button>
+        <button id="claimDailyBtn" class="primary-btn" type="button" style="width:100%; margin-top:12px;">🎁 Открыть сегодняшний подарок</button>
       </div>
     </div>
   </div>
@@ -456,14 +434,14 @@
         <button id="closeStyleModalBtn" class="close-btn" type="button">✕</button>
       </div>
       <div class="style-body">
-        <p class="gram-desc">Настрой фон, гирлянду и макушку — изменения увидят все на этой ёлке!</p>
-        <label class="gram-label">🌌 Фон:</label>
+        <p class="field-desc">Настрой фон, гирлянду и макушку — изменения увидят все на этой ёлке!</p>
+        <label class="field-label">🌌 Фон:</label>
         <div id="bgThemeOptions" class="style-options"></div>
-        <label class="gram-label">💡 Гирлянда:</label>
+        <label class="field-label">💡 Гирлянда:</label>
         <div id="garlandOptions" class="style-options"></div>
-        <label class="gram-label">👑 Макушка:</label>
+        <label class="field-label">👑 Макушка:</label>
         <div id="topperOptions" class="style-options"></div>
-        <button id="saveStyleBtn" class="confirm-gram-btn" type="button" style="width:100%; margin-top:14px;">✨ Применить стиль</button>
+        <button id="saveStyleBtn" class="primary-btn" type="button" style="width:100%; margin-top:14px;">✨ Применить стиль</button>
       </div>
     </div>
   </div>
@@ -496,13 +474,13 @@
       <div class="lootbox-body">
         <div id="lootboxPrizeEmoji" class="lootbox-prize-emoji">🎁</div>
         <div id="lootboxPrizeText" class="lootbox-prize-text"></div>
-        <button id="lootboxOkBtn" class="confirm-gram-btn" type="button" style="width:100%; margin-top:14px;">Забрать приз 🎉</button>
+        <button id="lootboxOkBtn" class="primary-btn" type="button" style="width:100%; margin-top:14px;">Забрать приз 🎉</button>
       </div>
     </div>
   </div>
 
   <div id="toast" class="toast"></div>
 </div>
-<script src="/static/app.js?v=7"></script>
+<script src="/static/app.js?v=8"></script>
 </body>
 </html>
