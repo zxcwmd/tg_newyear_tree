@@ -109,6 +109,12 @@ let state = {
   nftDraftToken: 0,
   nftDraftTo: 0,
   nftMintEnabled: false,
+  tgGifts: [],
+  tgGiftsAvailable: false,
+  tgGiftsReason: "",
+  tgGiftsLoaded: false,
+  tgSelectedGiftId: "",
+  attachedGifts: [],
   adventRewards: [],
   dailyStreak: 0,
   canClaimDaily: true,
@@ -1774,6 +1780,7 @@ async function refreshTreeData(inviteOverride = "") {
   if (Array.isArray(data.nft_catalog)) state.nftCatalog = data.nft_catalog;
   if (Array.isArray(data.nft_gifts)) state.nftGifts = data.nft_gifts;
   state.nftMintEnabled = !!data.nft_mint_enabled;
+  if (Array.isArray(data.telegram_gifts)) state.attachedGifts = data.telegram_gifts;
   state.adventRewards = data.advent_rewards || state.adventRewards;
   state.decorations = data.decorations || [];
   state.stats = data.stats || [];
@@ -1942,6 +1949,13 @@ function postcardUrl() {
 }
 
 function renderPostcardGifts(gifts) {
+  const tg = (state.attachedGifts || []).map((g) => ({
+    emoji: g.emoji || "🎁",
+    title: g.title || "Telegram-подарок",
+    from_name: g.subtitle || "Telegram",
+    message: g.message || "",
+  }));
+  gifts = [...tg, ...(Array.isArray(gifts) ? gifts : [])];
   const boxes = [$("#postcardGifts"), $("#previewGifts")].filter(Boolean);
   for (const box of boxes) {
     box.innerHTML = "";
@@ -2105,15 +2119,161 @@ function renderNftRecipients() {
   }
 }
 
-function openNftGiftModal() {
-  if (!Array.isArray(state.nftCatalog) || !state.nftCatalog.length) {
-    toast("Коллекция подарков ещё не загружена", true);
+async function loadMyTelegramGifts(force = false) {
+  const box = $("#tgGiftsList");
+  if (!box) return;
+  if (state.tgGiftsLoaded && !force) {
+    renderTelegramGifts();
     return;
   }
-  state.nftDraftToken = state.nftDraftToken || Number(state.nftCatalog[0].token_id);
-  renderNftRecipients();
-  renderNftCatalog();
+  box.innerHTML = `<div class="gift-empty">Запрашиваем твои подарки у Telegram…</div>`;
+  try {
+    const res = await fetch(
+      `/api/telegram-gifts?user_id=${currentUser.id}&init_data=${encodeURIComponent(initData)}`,
+      { cache: "no-store" },
+    );
+    const data = await res.json();
+    state.tgGifts = Array.isArray(data.gifts) ? data.gifts : [];
+    state.tgGiftsAvailable = !!data.available;
+    state.tgGiftsReason = data.reason || "";
+    state.tgGiftsLoaded = true;
+  } catch (e) {
+    state.tgGifts = [];
+    state.tgGiftsAvailable = false;
+    state.tgGiftsReason = "Не удалось связаться с Telegram";
+  }
+  renderTelegramGifts();
+}
+
+function renderTelegramGifts() {
+  const box = $("#tgGiftsList");
+  if (!box) return;
+  box.innerHTML = "";
+
+  if (!state.tgGiftsAvailable) {
+    // Запасной путь: подарок можно прислать боту и прикрепить по ссылке
+    box.innerHTML = `
+      <div class="gift-empty">
+        Не получилось получить подарки из Telegram${state.tgGiftsReason ? `: ${escapeHtml(state.tgGiftsReason)}` : ""}.<br/>
+        Открой приложение внутри Telegram и убедись, что у профиля есть подарки (Telegram → «Подарки»).
+      </div>
+      <label class="field-label">Ссылка на твой подарок (t.me/nft/…):</label>
+      <input id="tgGiftLinkInput" class="text-input" type="text" placeholder="https://t.me/nft/…" />
+      <button id="tgGiftLinkBtn" class="postcard-btn" type="button">📎 Прикрепить по ссылке</button>
+    `;
+    $("#tgGiftLinkBtn")?.addEventListener("click", attachGiftByLink);
+    return;
+  }
+
+  if (!state.tgGifts.length) {
+    box.innerHTML = `<div class="gift-empty">У тебя пока нет Telegram-подарков. Их можно получить от друзей или купить в Telegram 🎁</div>`;
+    return;
+  }
+
+  const attachedIds = new Set((state.attachedGifts || []).map((g) => g.owned_gift_id));
+  for (const g of state.tgGifts) {
+    const isAttached = attachedIds.has(g.owned_gift_id) || !!g.attached;
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "nft-card tg-gift-card" + (isAttached ? " attached" : "");
+    card.innerHTML = `
+      <span class="nft-emoji">${g.emoji || "🎁"}</span>
+      <span class="nft-meta">
+        <b>${escapeHtml(g.title || "Подарок")}</b>
+        <small>${escapeHtml(g.subtitle || "")}</small>
+      </span>
+      <span class="tg-gift-state">${isAttached ? "на ёлке ✓" : "прикрепить"}</span>
+    `;
+    card.onclick = () => {
+      if (isAttached) {
+        detachTelegramGift(g.owned_gift_id);
+      } else {
+        attachTelegramGift(g.owned_gift_id);
+      }
+    };
+    box.appendChild(card);
+  }
+}
+
+async function attachTelegramGift(ownedGiftId) {
+  try {
+    const gift = (state.tgGifts || []).find((g) => g.owned_gift_id === ownedGiftId);
+    const res = await fetch("/api/telegram-gifts/attach", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        owned_gift_id: ownedGiftId,
+        message: ($("#tgGiftMessageInput")?.value || "").trim(),
+        init_data: initData,
+        user: currentUser,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Не удалось прикрепить");
+    haptic("heavy");
+    toast(`Подарок «${gift?.title || "Telegram"}» прикреплён к ёлке! 🎁`);
+    if ($("#tgGiftMessageInput")) $("#tgGiftMessageInput").value = "";
+    await refreshTreeData();
+    loadPostcard(true);
+    renderTelegramGifts();
+  } catch (err) {
+    toast(err.message || "Не удалось прикрепить подарок", true);
+  }
+}
+
+async function detachTelegramGift(ownedGiftId) {
+  try {
+    const res = await fetch("/api/telegram-gifts/detach", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ owned_gift_id: ownedGiftId, init_data: initData, user: currentUser }),
+    });
+    if (!res.ok) throw new Error("Не удалось снять подарок");
+    haptic("medium");
+    toast("Подарок снят с ёлки");
+    await refreshTreeData();
+    loadPostcard(true);
+    renderTelegramGifts();
+  } catch (err) {
+    toast(err.message || "Не удалось снять подарок", true);
+  }
+}
+
+async function attachGiftByLink() {
+  const raw = ($("#tgGiftLinkInput")?.value || "").trim();
+  if (!raw) {
+    toast("Вставь ссылку на подарок", true);
+    return;
+  }
+  // t.me/nft/<name>-<number> → ищем среди своих подарков по имени
+  const name = raw.split("/").pop();
+  const found = (state.tgGifts || []).find(
+    (g) => g.slug && name.toLowerCase().includes(String(g.slug).toLowerCase()),
+  );
+  if (found) {
+    await attachTelegramGift(found.owned_gift_id);
+  } else {
+    toast("Не нашли этот подарок среди твоих. Открой список подарков в Telegram и попробуй снова", true);
+  }
+}
+
+function openNftGiftModal() {
+  const tabs = $$(".gift-tab");
+  tabs.forEach((t) => t.classList.toggle("active", t.dataset.giftTab === "telegram"));
+  switchGiftTab("telegram");
   $("#nftGiftModal").classList.remove("hidden");
+  loadMyTelegramGifts(true);
+}
+
+function switchGiftTab(tab) {
+  $$(".gift-tab").forEach((b) => b.classList.toggle("active", b.dataset.giftTab === tab));
+  $("#giftPanelTelegram")?.classList.toggle("hidden", tab !== "telegram");
+  $("#giftPanelGame")?.classList.toggle("hidden", tab !== "game");
+  if (tab === "game") {
+    state.nftDraftToken = state.nftDraftToken || Number(state.nftCatalog?.[0]?.token_id || 0);
+    renderNftRecipients();
+    renderNftCatalog();
+  }
 }
 
 async function sendNftGift() {
@@ -2157,6 +2317,9 @@ $("#nftGiftModal")?.addEventListener("click", (e) => {
   if (e.target === $("#nftGiftModal")) $("#nftGiftModal").classList.add("hidden");
 });
 $("#sendNftGiftBtn")?.addEventListener("click", sendNftGift);
+$$(".gift-tab").forEach((btn) => {
+  btn.addEventListener("click", () => switchGiftTab(btn.dataset.giftTab));
+});
 
 $("#postcardDownloadBtn")?.addEventListener("click", downloadPostcard);
 $("#previewDownloadBtn")?.addEventListener("click", downloadPostcard);

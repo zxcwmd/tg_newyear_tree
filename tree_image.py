@@ -92,8 +92,125 @@ def _load_emoji_font(size: int):
     return None
 
 
-def _draw_emoji(img: Image.Image, draw: ImageDraw.ImageDraw, cx: float, cy: float, size: float, emoji: str):
-    """Эмодзи, если есть эмодзи-шрифт; иначе — золотой медальон с символом."""
+# Символы, которые точно есть в обычных шрифтах (DejaVu/Liberation) — их можно рисовать текстом
+SAFE_GLYPHS = "♥❤★☆❄☃✦✧✿☀☾✈✔✝☘♠♣♦♪♫☕⚑⌚✂✎✏✒✉✌✍☺☻♨⚡"
+
+# Векторные медальоны для эмодзи, которых нет в шрифтах (или если эмодзи-шрифт не установлен)
+VECTOR_ICONS = {
+    "gift": {"🎁", "🛍", "🎀"},
+    "diamond": {"💎", "💠", "🔷", "🔶"},
+    "star": {"⭐", "🌟", "✨", "🌠", "💫"},
+    "heart": {"❤", "💖", "💝", "💗", "💕", "♥"},
+    "snow": {"❄", "🌨", "⛄", "☃", "🧊"},
+    "tree": {"🎄", "🌲", "🌳"},
+    "bell": {"🔔", "🛎", "🎐"},
+    "santa": {"🎅", "🤶"},
+    "flower": {"🌹", "🌷", "🌸", "💐"},
+    "cake": {"🎂", "🍰", "🧁", "🍫"},
+    "bear": {"🧸", "🐻", "🐼"},
+    "rocket": {"🚀", "🛸"},
+    "firework": {"🎆", "🎇", "🎉", "🎊"},
+    "crown": {"👑", "🏆", "🥇", "🎖"},
+    "moon": {"🌙", "🌛", "🌜", "☾"},
+    "sun": {"☀", "🌞", "🌻"},
+}
+
+
+def _icon_kind(emoji: str, kind: str | None = None) -> str:
+    for name, chars in VECTOR_ICONS.items():
+        if emoji in chars:
+            return name
+    return "diamond" if kind in ("unique", "nft") else "gift"
+
+
+def _draw_icon_shape(draw: ImageDraw.ImageDraw, cx: float, cy: float, r: float, icon: str):
+    """Векторный медальон: ромб/подарок/звезда и т.п. Цвета новогодние."""
+    gold, gold_hi = (253, 224, 71), (255, 248, 200)
+    line = max(1, int(SCALE * 1.4))
+    if icon == "diamond":
+        d = r * 0.92
+        pts = [(cx, cy - d), (cx + d * 0.86, cy), (cx, cy + d), (cx - d * 0.86, cy)]
+        draw.polygon(pts, fill=(125, 211, 252), outline=(224, 247, 255))
+        draw.line([(cx - d * 0.86, cy), (cx + d * 0.86, cy)], fill=(224, 247, 255), width=line)
+        draw.polygon([(cx, cy - d), (cx - d * 0.4, cy), (cx + d * 0.4, cy)], fill=(186, 230, 253))
+    elif icon == "star":
+        import math
+        pts = []
+        for i in range(10):
+            ang = -math.pi / 2 + i * math.pi / 5
+            rad = r * 0.95 if i % 2 == 0 else r * 0.42
+            pts.append((cx + rad * math.cos(ang), cy + rad * math.sin(ang)))
+        draw.polygon(pts, fill=gold, outline=gold_hi)
+    elif icon == "heart":
+        import math
+        rr = r * 0.46
+        cx1, cx2 = cx - rr * 0.92, cx + rr * 0.92
+        draw.ellipse([cx1 - rr, cy - rr * 1.15, cx1 + rr, cy + rr * 0.85], fill=(251, 113, 133))
+        draw.ellipse([cx2 - rr, cy - rr * 1.15, cx2 + rr, cy + rr * 0.85], fill=(251, 113, 133))
+        pts = [(cx - math.sqrt(2) * rr * 0.98, cy + rr * 0.15),
+               (cx + math.sqrt(2) * rr * 0.98, cy + rr * 0.15),
+               (cx, cy + r * 1.02)]
+        draw.polygon(pts, fill=(251, 113, 133))
+    elif icon == "snow":
+        for i in range(6):
+            import math
+            ang = i * math.pi / 3
+            draw.line([(cx, cy), (cx + r * 0.92 * math.cos(ang), cy + r * 0.92 * math.sin(ang))],
+                      fill=(224, 247, 255), width=line)
+            # «веточки»
+            for sign in (-1, 1):
+                bx = cx + r * 0.62 * math.cos(ang)
+                by = cy + r * 0.62 * math.sin(ang)
+                ang2 = ang + sign * math.pi / 5
+                draw.line([(bx, by), (bx + r * 0.3 * math.cos(ang2), by + r * 0.3 * math.sin(ang2))],
+                          fill=(224, 247, 255), width=line)
+    elif icon == "tree":
+        draw.polygon([(cx, cy - r * 1.0), (cx - r * 0.72, cy + r * 0.45), (cx + r * 0.72, cy + r * 0.45)], fill=(74, 222, 128))
+        draw.polygon([(cx, cy - r * 0.45), (cx - r * 0.92, cy + r * 0.85), (cx + r * 0.92, cy + r * 0.85)], fill=(34, 197, 94))
+        draw.rectangle([cx - r * 0.16, cy + r * 0.75, cx + r * 0.16, cy + r * 1.05], fill=(120, 53, 15))
+    elif icon == "bell":
+        draw.pieslice([cx - r * 0.85, cy - r * 0.95, cx + r * 0.85, cy + r * 0.75], 180, 360, fill=gold)
+        draw.rectangle([cx - r * 0.85, cy - r * 0.12, cx + r * 0.85, cy + r * 0.18], fill=gold)
+        draw.ellipse([cx - r * 0.18, cy + r * 0.16, cx + r * 0.18, cy + r * 0.52], fill=gold_hi)
+    elif icon == "firework":
+        import math
+        for i in range(8):
+            ang = i * math.pi / 4
+            draw.line([(cx + r * 0.25 * math.cos(ang), cy + r * 0.25 * math.sin(ang)),
+                       (cx + r * 0.95 * math.cos(ang), cy + r * 0.95 * math.sin(ang))],
+                      fill=gold_hi if i % 2 else (251, 191, 36), width=max(1, int(SCALE * 2)))
+    else:  # gift — коробка с бантом
+        bw, bh = r * 1.5, r * 1.25
+        draw.rounded_rectangle([cx - bw / 2, cy - bh / 2 + r * 0.12, cx + bw / 2, cy + bh / 2], radius=r * 0.12, fill=(239, 68, 68))
+        draw.rectangle([cx - r * 0.16, cy - bh / 2 + r * 0.12, cx + r * 0.16, cy + bh / 2], fill=gold)
+        draw.rectangle([cx - bw / 2, cy - r * 0.05, cx + bw / 2, cy + r * 0.2], fill=gold)
+        top = cy - bh / 2 + r * 0.12
+        draw.ellipse([cx - r * 0.58, top - r * 0.02, cx - r * 0.04, top + r * 0.34], outline=gold, width=line)
+        draw.ellipse([cx + r * 0.04, top - r * 0.02, cx + r * 0.58, top + r * 0.34], outline=gold, width=line)
+
+
+def _draw_emoji(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    cx: float,
+    cy: float,
+    size: float,
+    emoji: str,
+    kind: str | None = None,
+):
+    """Эмодзи-медальон на подложке; без эмодзи-шрифта — векторный значок."""
+    r = size * 0.62
+    # Тёмный медальон-подложка с золотым ободком — общий для всех вариантов
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(37, 47, 74), outline=(253, 224, 71), width=max(1, int(SCALE * 1.4)))
+    # мягкий верхний блик (полупрозрачный слой, чтобы не читался белым пятном)
+    gloss = Image.new("RGBA", (int(r * 4) + 4, int(r * 4) + 4), (0, 0, 0, 0))
+    ImageDraw.Draw(gloss).ellipse(
+        [r * 2 - r * 0.62 + 2, r * 2 - r * 0.82 + 2, r * 2 + r * 0.1 + 2, r * 2 - r * 0.04 + 2],
+        fill=(255, 255, 255, 26),
+    )
+    gloss = gloss.filter(ImageFilter.GaussianBlur(max(1, int(SCALE * 2))))
+    img.alpha_composite(gloss, (int(cx - r * 2 - 2), int(cy - r * 2 - 2)))
+
     font = _load_emoji_font(int(size))
     if font is not None:
         try:
@@ -103,14 +220,15 @@ def _draw_emoji(img: Image.Image, draw: ImageDraw.ImageDraw, cx: float, cy: floa
             return
         except Exception:
             pass
-    # Фолбэк: медальон с символом из обычного шрифта
-    r = size * 0.62
-    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(37, 47, 74), outline=(253, 224, 71), width=max(1, int(SCALE * 1.4)))
-    draw.ellipse([cx - r * 0.78, cy - r * 0.82, cx + r * 0.1, cy - r * 0.05], fill=(255, 255, 255, 40))
-    f = _load_font(int(size * 0.72))
-    bbox = draw.textbbox((0, 0), emoji, font=f)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text((cx - tw / 2, cy - th / 2 - bbox[1]), emoji, font=f, fill=(255, 241, 176))
+
+    # Без эмодзи-шрифта: простые символы рисуем текстом, остальное — вектором
+    if len(emoji) == 1 and emoji in SAFE_GLYPHS and ord(emoji) < 0x3000:
+        f = _load_font(int(size * 0.78))
+        bbox = draw.textbbox((0, 0), emoji, font=f)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        draw.text((cx - tw / 2, cy - th / 2 - bbox[1]), emoji, font=f, fill=(255, 241, 176))
+        return
+    _draw_icon_shape(draw, cx, cy, r * 0.66, _icon_kind(emoji, kind))
 
 
 def _s(v: float) -> float:
@@ -814,11 +932,14 @@ def _draw_nft_gifts(img: Image.Image, draw: ImageDraw.ImageDraw, gifts: list[dic
         img.alpha_composite(card)
 
         # Эмодзи-медальон
-        _draw_emoji(img, draw, x0 + _s(32), y0 + card_h / 2, _s(42), gift.get("emoji") or "🎁")
+        _draw_emoji(
+            img, draw, x0 + _s(30), y0 + card_h / 2, _s(36),
+            gift.get("emoji") or "🎁", gift.get("kind"),
+        )
 
         # Тексты: название, подпись «от …» и сообщение (с обрезкой по ширине)
         text_x = x0 + _s(58)
-        text_w = card_w - _s(66)
+        text_w = card_w - _s(70)
         title = _trim(gift.get("title") or "NFT-подарок", title_font, text_w)
         draw.text((text_x, y0 + _s(16)), title, font=title_font, fill=(255, 249, 219))
         from_name = _trim(gift.get("from_name") or "друга", sub_font, text_w - _s(18))
@@ -826,9 +947,13 @@ def _draw_nft_gifts(img: Image.Image, draw: ImageDraw.ImageDraw, gifts: list[dic
         msg = str(gift.get("message") or "").strip()
         if msg:
             draw.text((text_x, y0 + _s(54)), _trim(msg, sub_font, text_w), font=sub_font, fill=(203, 213, 225))
-        # Номер токена — «сертификат» подарка
-        draw.text((text_x, y0 + _s(72)), _trim(f"#{gift.get('token_id', 0)}", sub_font, text_w),
-                  font=sub_font, fill=(120, 140, 170))
+        # Бейдж-«сертификат»: номер NFT/токена или подпись Telegram
+        badge = gift.get("badge")
+        if badge is None:
+            badge = f"#{gift.get('token_id', 0)}"
+        if str(badge).strip():
+            draw.text((text_x, y0 + _s(72)), _trim(str(badge), sub_font, text_w),
+                      font=sub_font, fill=(120, 140, 170))
 
     if len(gifts) > len(shown):
         draw.text((SW / 2 - _s(30), base_y + card_h + _s(22)),
@@ -908,6 +1033,9 @@ def generate_tree_image(
 
     # Подпись: мягкая тень + градиентная плашка для читаемости
     font = _load_font(30)
+    title = str(title or "").strip()
+    if title and not title.lower().startswith(("ёлка", "елка", "christmas")):
+        title = f"Ёлка: {title}"
     text = title if len(title) <= 46 else title[:45] + "…"
     bbox = d.textbbox((0, 0), text, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]

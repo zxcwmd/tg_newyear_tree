@@ -93,6 +93,28 @@ CREATE TABLE IF NOT EXISTS tree_gifts (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS attached_gifts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    tree_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,              -- чей подарок
+    owned_gift_id TEXT NOT NULL,           -- id подарка в Telegram
+    kind TEXT NOT NULL DEFAULT 'regular',  -- regular | unique
+    is_nft INTEGER NOT NULL DEFAULT 0,     -- unique = NFT в TON
+    slug TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    subtitle TEXT NOT NULL DEFAULT '',
+    emoji TEXT NOT NULL DEFAULT '🎁',
+    sender_name TEXT NOT NULL DEFAULT 'Telegram',
+    number INTEGER,
+    message TEXT NOT NULL DEFAULT '',
+    is_hidden INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    UNIQUE(tree_id, owned_gift_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_attached_tree ON attached_gifts(tree_id);
+CREATE INDEX IF NOT EXISTS idx_attached_user ON attached_gifts(user_id);
 CREATE INDEX IF NOT EXISTS idx_gifts_tree ON tree_gifts(tree_id);
 CREATE INDEX IF NOT EXISTS idx_gifts_chat ON tree_gifts(chat_id);
 CREATE INDEX IF NOT EXISTS idx_decorations_chat ON decorations(chat_id);
@@ -118,6 +140,7 @@ async def init_db():
             "ALTER TABLE trees ADD COLUMN garland_style TEXT NOT NULL DEFAULT 'classic'",
             "ALTER TABLE trees ADD COLUMN topper_type TEXT NOT NULL DEFAULT 'star'",
             "ALTER TABLE decorations ADD COLUMN wish_text TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE attached_gifts ADD COLUMN sender_name TEXT NOT NULL DEFAULT 'Telegram'",
         ]:
             try:
                 await db.execute(col_sql)
@@ -645,6 +668,83 @@ async def get_nft_gifts(tree_id: int) -> list[dict]:
             "SELECT * FROM tree_gifts WHERE tree_id = ? ORDER BY created_at ASC", (int(tree_id),)
         )
         return [dict(r) for r in await cur.fetchall()]
+
+
+async def attach_telegram_gift(
+    tree_id: int,
+    user_id: int,
+    gift: dict,
+    message: str = "",
+) -> dict | None:
+    """Прикрепляет подарок игрока к открытке (идемпотентно по owned_gift_id)."""
+    if not gift or not gift.get("owned_gift_id"):
+        return None
+    now = datetime.now(timezone.utc).isoformat()
+    number = gift.get("number")
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute(
+            """
+            INSERT INTO attached_gifts
+                (chat_id, tree_id, user_id, owned_gift_id, kind, is_nft, slug, title,
+                 subtitle, emoji, sender_name, number, message, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tree_id, owned_gift_id) DO UPDATE SET
+                message = excluded.message,
+                is_hidden = 0
+            """,
+            (
+                int(tree_id), int(tree_id), int(user_id), str(gift["owned_gift_id"]),
+                str(gift.get("kind") or "regular"),
+                1 if gift.get("is_nft") else 0,
+                str(gift.get("slug") or "")[:64],
+                str(gift.get("title") or "Подарок")[:64],
+                str(gift.get("subtitle") or "")[:64],
+                str(gift.get("emoji") or "🎁")[:8],
+                str(gift.get("sender_name") or "Telegram")[:48],
+                int(number) if isinstance(number, int) else None,
+                (message or "")[:120],
+                now,
+            ),
+        )
+        await db.commit()
+        cur = await db.execute(
+            "SELECT * FROM attached_gifts WHERE tree_id = ? AND owned_gift_id = ?",
+            (int(tree_id), str(gift["owned_gift_id"])),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def get_attached_gifts(tree_id: int) -> list[dict]:
+    """Прикреплённые к открытке Telegram-подарки (для отрисовки и UI)."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM attached_gifts WHERE tree_id = ? AND is_hidden = 0 ORDER BY created_at ASC",
+            (int(tree_id),),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_user_attached_gifts(user_id: int) -> list[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM attached_gifts WHERE user_id = ? AND is_hidden = 0", (int(user_id),)
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def detach_telegram_gift(tree_id: int, user_id: int, owned_gift_id: str) -> bool:
+    """Снимает подарок с открытки (только свой)."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cur = await db.execute(
+            "DELETE FROM attached_gifts WHERE tree_id = ? AND user_id = ? AND owned_gift_id = ?",
+            (int(tree_id), int(user_id), str(owned_gift_id)),
+        )
+        await db.commit()
+        return cur.rowcount > 0
 
 
 ADVENT_REWARDS = [

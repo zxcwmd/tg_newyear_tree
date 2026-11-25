@@ -2018,3 +2018,86 @@ header h1 {
   color: #94a3b8;
   text-align: center;
 }
+
+/* ===== v11: вкладки подарков и карточки Telegram-подарков ===== */
+.gift-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 0 18px 4px;
+}
+.gift-tab {
+  flex: 1;
+  padding: 9px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-dim, #b9c6d8);
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s, border-color 0.18s;
+}
+.gift-tab.active {
+  background: linear-gradient(135deg, rgba(255, 209, 102, 0.26), rgba(255, 106, 136, 0.22));
+  border-color: rgba(255, 209, 102, 0.55);
+  color: #fff;
+}
+.tg-gifts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+  margin: 10px 0 12px;
+}
+.tg-gift-card {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  cursor: pointer;
+  position: relative;
+}
+.tg-gift-card:hover {
+  border-color: rgba(255, 209, 102, 0.5);
+  background: rgba(255, 255, 255, 0.09);
+}
+.tg-gift-card.attached {
+  border-color: rgba(94, 234, 212, 0.55);
+  background: rgba(94, 234, 212, 0.12);
+}
+.tg-gift-card .nft-emoji {
+  font-size: 26px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.tg-gift-card .nft-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.tg-gift-card .nft-meta b {
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tg-gift-card .nft-meta small {
+  font-size: 11px;
+  color: var(--text-dim, #b9c6d8);
+}
+.tg-gift-state {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-dim, #b9c6d8);
+}
+.tg-gift-card.attached .tg-gift-state { color: #5eead4; }

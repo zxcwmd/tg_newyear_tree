@@ -267,6 +267,23 @@ NFT_MINT_ENABLED = os.getenv("NFT_MINT_ENABLED", "0").strip() in ("1", "true", "
 NFT_COLLECTION_ADDRESS = os.getenv("NFT_COLLECTION_ADDRESS", "").strip()
 TON_API_KEY = os.getenv("TON_API_KEY", "").strip()
 
+# Прикрепление собственных Telegram-подарков (regular + unique/NFT) через Bot API getUserGifts.
+TELEGRAM_GIFTS_ENABLED = os.getenv("TELEGRAM_GIFTS_ENABLED", "1").strip() in ("1", "true", "yes")
+# Сколько последних подарков игрока запрашивать и показывать
+TELEGRAM_GIFTS_LIMIT = int(os.getenv("TELEGRAM_GIFTS_LIMIT", "24"))
+# Публичный адрес Telegram Bot API (для тестов/прокси)
+TELEGRAM_API_BASE = os.getenv("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
+
+# Эмодзи для популярных подарков Telegram (slug -> эмодзи).
+GIFT_EMOJI = {
+    "heart": "❤️", "bear": "🐻", "rose": "🌹", "cake": "🎂", "bouquet": "💐",
+    "rocket": "🚀", "trophy": "🏆", "ring": "💍", "diamond": "💎", "star": "⭐",
+    "chocolate": "🍫", "teddy": "🧸", "snowman": "⛄", "santa": "🎅", "newyear": "🎄",
+    "cup": "🏆", "medal": "🥇", "crown": "👑", "gem": "💎", "gift": "🎁",
+    "snow": "❄️", "ball": "🎾", "candle": "🕯️", "fireworks": "🎆", "champagne": "🍾",
+    "delicious": "🍰", "homemade": "🧁", "ice": "🧊", "moon": "🌙", "sun": "☀️",
+}
+
 # Поздравления для финала
 GREETINGS = [
     "🎉 С Новым годом! Ваша ёлка наряжена — посмотрите, какая красота получилась!",
