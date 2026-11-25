@@ -2155,6 +2155,27 @@ $("#closeLootboxModalBtn").addEventListener("click", () => $("#lootboxModal").cl
 $("#lootboxOkBtn").addEventListener("click", () => $("#lootboxModal").classList.add("hidden"));
 $("#lootboxModal").addEventListener("click", (e) => { if (e.target === $("#lootboxModal")) $("#lootboxModal").classList.add("hidden"); });
 
+// Пока открыт любой модал, страница под ним не прокручивается: иначе на
+// телефоне фон «резинит» под оверлеем и это читается как рывок интерфейса.
+const MODAL_SELECTORS = ["#teamModal", "#styleModal", "#ornamentModal", "#lootboxModal"];
+
+function syncModalScrollLock() {
+  const anyOpen = MODAL_SELECTORS.some((sel) => {
+    const el = $(sel);
+    return el && !el.classList.contains("hidden");
+  });
+  document.body.classList.toggle("modal-open", anyOpen);
+}
+
+if (typeof MutationObserver === "function") {
+  const modalObserver = new MutationObserver(syncModalScrollLock);
+  MODAL_SELECTORS.forEach((sel) => {
+    const el = $(sel);
+    if (el) modalObserver.observe(el, { attributes: true, attributeFilter: ["class"] });
+  });
+  syncModalScrollLock();
+}
+
 drawSnowAndStars();
 drawGarlandLights();
 drawTopStar();

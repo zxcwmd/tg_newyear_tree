@@ -155,7 +155,17 @@ header h1 {
   padding: 7px 2px;
   border-radius: 12px;
   cursor: pointer;
-  transition: all 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 0.18s ease,
+    background-image 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+body.modal-open {
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .tab-btn .t-icon {
@@ -356,8 +366,9 @@ header h1 {
   width: 100%;
   height: auto;
   display: block;
-  /* Камера зумит через viewBox: подсказываем браузеру держать слой на GPU */
-  will-change: contents;
+  /* Камера зумит через viewBox: подсказываем браузеру держать слой на GPU.
+     will-change включает app.js только на время анимации — постоянный
+     will-change держал бы лишний слой в памяти всё время. */
   transform: translateZ(0);
   border-radius: 14px;
   cursor: pointer;
