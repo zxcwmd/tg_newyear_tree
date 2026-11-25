@@ -7,6 +7,7 @@ from config import (
     DATABASE_PATH,
     DONATE_PACKS,
     LEGACY_SHARED_TREE_ID,
+    LOOTBOX_POOL,
     LOOTBOX_PRICE,
     ORNAMENTS,
     PERSONAL_TREE_BASE,
@@ -626,14 +627,7 @@ async def open_lootbox(user_id: int) -> tuple[bool, str, dict, dict]:
     if profile["coins"] < LOOTBOX_PRICE:
         return False, f"Нужно {LOOTBOX_PRICE} 🪙 для открытия Сюрприз-бокса!", {}, profile
 
-    pool = [
-        {"weight": 26, "item": "gift", "coins": 40, "label": "🎁 Подарок + 40 🪙"},
-        {"weight": 24, "item": "star", "coins": 50, "label": "⭐ Звезда + 50 🪙"},
-        {"weight": 20, "item": "angel", "coins": 75, "label": "👼 Редкий Ангелочек + 75 🪙"},
-        {"weight": 15, "item": "crystal", "coins": 100, "label": "💎 Легендарный Кристалл + 100 🪙"},
-        {"weight": 15, "item": "bell", "coins": 300, "label": "🎰 ДЖЕКПОТ: 🔔 Колокольчик + 300 🪙!"},
-    ]
-    choices = [p for p in pool for _ in range(p["weight"])]
+    choices = [p for p in LOOTBOX_POOL for _ in range(p["weight"])]
     won = random.choice(choices)
     net_coin_diff = won["coins"] - LOOTBOX_PRICE
     turnover_add = LOOTBOX_PRICE + won["coins"]

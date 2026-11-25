@@ -102,7 +102,8 @@ let state = {
   lastClickAt: 0,
   activeGramOrder: null,
   treeThemes: null,
-  lootboxPrice: 150,
+  lootboxPrice: 100,
+  lootboxPool: [],
   adventRewards: [],
   dailyStreak: 0,
   canClaimDaily: true,
@@ -1038,13 +1039,21 @@ async function saveMoveDecoration(decorationId, x, y) {
 // ============================================================================
 function getDisplayName(row) {
   if (row.chat_title) return row.chat_title;
-  if (row.username) return `@${row.username}`;
-  return row.first_name || `Игрок #${row.user_id}`;
+  // В топе показываем человеческое имя, а не @username
+  const name = (row.first_name || "").trim();
+  if (name && name !== "Участник" && name !== "Игрок") return name;
+  if (row.username) return row.username;
+  return `Игрок #${row.user_id}`;
 }
 
 function getInitials(row) {
   const name = (row.chat_title || row.first_name || row.username || "🎄").trim();
   return name.slice(0, 1).toUpperCase();
+}
+
+function getRankSubline(row) {
+  if (!row.username) return "";
+  return `@${row.username}`;
 }
 
 function renderLeaderboard() {
@@ -1131,6 +1140,7 @@ function renderLeaderboard() {
         <div class="lb-user-meta">
           <div class="lb-uname">${escapeHtml(getDisplayName(row))} ${isMe ? `<b>${isTeamMode ? "(Открыта)" : "(Вы)"}</b>` : ""}</div>
           <div class="lb-sub">${subMetric}</div>
+          ${!isTeamMode && getRankSubline(row) ? `<div class="lb-handle">${escapeHtml(getRankSubline(row))}</div>` : ""}
         </div>
       </div>
       <div class="lb-right">
@@ -1198,10 +1208,19 @@ function renderShop() {
   // 🎰 Сюрприз-бокс (Гача) — карточка сверху
   const loot = document.createElement("div");
   loot.className = "lootbox-card";
+  const pool = getLootboxPool();
   loot.innerHTML = `
     <div class="s-emoji">🎰</div>
     <div class="s-title">Новогодний Сюрприз-бокс</div>
-    <p>Гача за <b>${state.lootboxPrice} 🪙</b>: редкие 👼 Ангелочек и 💎 Кристалл, игрушки и джекпот до 300 🪙!</p>
+    <p>Всегда <b>${state.lootboxPrice} 🪙</b> за открытие. Внутри:</p>
+    <div class="slot-strip">${pool
+      .map(
+        (p) => `<div class="slot-mini">
+          <span class="slot-emoji">${state.ornaments?.[p.item]?.emoji || "🎁"}</span>
+          <span class="slot-coins">+${p.coins} 🪙</span>
+        </div>`,
+      )
+      .join("")}</div>
     <button type="button" class="buy-coin-btn" id="lootboxOpenBtn">Открыть за ${state.lootboxPrice} 🪙</button>
   `;
   loot.querySelector("#lootboxOpenBtn").addEventListener("click", (ev) => {
@@ -1311,14 +1330,20 @@ async function claimDailyAdvent() {
   }
 }
 
-function renderStyleModal() {
-  const themes = state.treeThemes;
-  if (!themes) return;
+function resetStyleDraft() {
   state.styleDraft = {
     bg_theme: state.tree?.bg_theme || "aurora",
     garland_style: state.tree?.garland_style || "classic",
     topper_type: state.tree?.topper_type || "star",
   };
+}
+
+function renderStyleModal(resetDraft = true) {
+  const themes = state.treeThemes;
+  if (!themes) return;
+  // Черновик сбрасывается только при открытии модалки, иначе клик по варианту
+  // перезаписывался старым стилем и «ничего не переключалось».
+  if (resetDraft) resetStyleDraft();
   const mk = (containerId, dict, key) => {
     const box = document.getElementById(containerId);
     if (!box) return;
@@ -1331,7 +1356,9 @@ function renderStyleModal() {
       b.onclick = () => {
         state.styleDraft[key] = k;
         haptic("light");
-        renderStyleModal();
+        renderStyleModal(false);
+        // Мгновенный предпросмотр на ёлке (без сохранения)
+        previewStyleDraft();
       };
       box.appendChild(b);
     }
@@ -1367,8 +1394,77 @@ async function saveTreeStyle() {
   }
 }
 
+// Набор призов бокса (приходит с сервера, чтобы игрок заранее видел, что выпадает)
+function getLootboxPool() {
+  if (Array.isArray(state.lootboxPool) && state.lootboxPool.length) return state.lootboxPool;
+  return [
+    { item: "gift", coins: 40, weight: 26 },
+    { item: "star", coins: 50, weight: 24 },
+    { item: "angel", coins: 75, weight: 20 },
+    { item: "crystal", coins: 100, weight: 15 },
+    { item: "bell", coins: 300, weight: 15 },
+  ];
+}
+
+// ============================================================================
+// 9c. СЛОТ-МАШИНА: показываем какой приз выпадает
+// ============================================================================
+const SLOT_SYMBOLS = ["gift", "star", "angel", "crystal", "bell"];
+
+function buildSlotColumn(pool, finalItem) {
+  // Лента из случайных призов + нужный символ через 2 позиции от конца
+  const tape = [];
+  for (let i = 0; i < 18; i++) {
+    tape.push(pool[Math.floor(Math.random() * pool.length)]);
+  }
+  const finalIdx = pool.findIndex((p) => p.item === finalItem);
+  tape.push(pool[finalIdx >= 0 ? finalIdx : 0]);
+  tape.push(pool[Math.floor(Math.random() * pool.length)]);
+  return tape;
+}
+
+function renderSlotTape(el, tape) {
+  el.innerHTML = tape
+    .map(
+      (p) => `<div class="slot-cell">
+        <span class="slot-emoji">${state.ornaments?.[p.item]?.emoji || "🎁"}</span>
+        <span class="slot-coins">+${p.coins} 🪙</span>
+      </div>`,
+    )
+    .join("");
+  return tape.length;
+}
+
 async function openLootbox(clientX, clientY) {
   await flushPendingClicks();
+  if (state.coins < state.lootboxPrice) {
+    toast(`Нужно ${state.lootboxPrice} 🪙 для открытия Сюрприз-бокса!`, true);
+    return;
+  }
+  const pool = getLootboxPool();
+  // Сначала запускаем анимацию слотов, а результат запрашиваем параллельно
+  const modal = $("#lootboxModal");
+  const reels = [$("#slotReel1"), $("#slotReel2"), $("#slotReel3")];
+  const resultText = $("#lootboxPrizeText");
+  const resultEmoji = $("#lootboxPrizeEmoji");
+  if (resultText) resultText.textContent = "Крутим слоты…";
+  if (resultEmoji) resultEmoji.textContent = "🎰";
+  modal.classList.remove("hidden");
+  modal.classList.add("spinning");
+  const okBtn = $("#lootboxOkBtn");
+  if (okBtn) {
+    okBtn.disabled = true;
+    okBtn.textContent = "Крутим…";
+  }
+  reels.forEach((reel, idx) => {
+    if (!reel) return;
+    const tape = buildSlotColumn(pool, SLOT_SYMBOLS[(idx + 1) % SLOT_SYMBOLS.length]);
+    const cells = renderSlotTape(reel, tape);
+    reel.style.transition = "none";
+    reel.style.transform = "translateY(0)";
+    reel.dataset.cells = String(cells);
+  });
+
   try {
     const res = await fetch("/api/lootbox", {
       method: "POST",
@@ -1382,12 +1478,47 @@ async function openLootbox(clientX, clientY) {
     if (data.profile) applyProfile(data.profile);
     const prize = data.prize || {};
     const emoji = state.ornaments?.[prize.item]?.emoji || "🎁";
-    $("#lootboxPrizeEmoji").textContent = emoji;
-    $("#lootboxPrizeText").textContent = data.message || "Приз получен!";
-    $("#lootboxModal").classList.remove("hidden");
-    await refreshTreeData();
+
+    // Останавливаем каждый барабан на выпавшем призе
+    reels.forEach((reel, idx) => {
+      if (!reel) return;
+      const tape = buildSlotColumn(pool, prize.item);
+      const cells = renderSlotTape(reel, tape);
+      reel.dataset.cells = String(cells);
+      const cellH = 58;
+      const target = -(cells - 2) * cellH; // нужный символ — предпоследний
+      reel.style.transition = "none";
+      reel.style.transform = "translateY(0)";
+      void reel.offsetHeight; // reflow, чтобы анимация точно стартовала
+      const delay = 140 + idx * 260;
+      setTimeout(() => {
+        reel.style.transition = `transform ${1.35 + idx * 0.45}s cubic-bezier(0.12, 0.75, 0.05, 1)`;
+        reel.style.transform = `translateY(${target}px)`;
+        haptic("light");
+      }, delay);
+    });
+
+    const totalSpin = 1350 + 2 * 450 + 260;
+    setTimeout(() => {
+      haptic("heavy");
+      modal.classList.remove("spinning");
+      modal.classList.add("won");
+      if (resultEmoji) resultEmoji.textContent = emoji;
+      if (resultText) resultText.textContent = data.message || "Приз получен!";
+      if (okBtn) {
+        okBtn.disabled = false;
+        okBtn.textContent = "Забрать приз 🎉";
+      }
+      refreshTreeData().catch(() => {});
+    }, totalSpin);
   } catch (err) {
-    toast(err.message || "Не хватает монет на бокс", true);
+    modal.classList.remove("spinning");
+    modal.classList.add("hidden");
+    if (okBtn) {
+      okBtn.disabled = false;
+      okBtn.textContent = "Забрать приз 🎉";
+    }
+    toast(err.message || `Не хватает монет на бокс (${state.lootboxPrice} 🪙)`, true);
   }
 }
 
@@ -1594,6 +1725,9 @@ setInterval(() => {
 // ============================================================================
 // 11. ЗАГРУЗКА ЁЛКИ, УКРАШЕНИЕ И СИНХРОНИЗАЦИЯ
 // ============================================================================
+let treeFetchSeq = 0;
+let lastAppliedSeq = 0;
+
 async function refreshTreeData(inviteOverride = "") {
   const q = new URLSearchParams({
     user_id: String(currentUser.id),
@@ -1604,9 +1738,16 @@ async function refreshTreeData(inviteOverride = "") {
   });
   if (urlReferrerId) q.set("referrer_id", String(urlReferrerId));
   const requestedChat = requestChatId();
+  const mySeq = ++treeFetchSeq;
   const res = await fetch(`/api/tree/${requestedChat}?${q.toString()}`, { cache: "no-store" });
   if (!res.ok) throw new Error(await res.text());
   const data = await res.json();
+  // Пока шёл запрос, мог прийти более свежий ответ — старый не применяем,
+  // иначе игрушки «пропадают» с ёлки. Если ёлку успели переключить — тоже мимо.
+  if (mySeq < lastAppliedSeq || String(requestedChat) !== requestChatId()) {
+    return;
+  }
+  lastAppliedSeq = mySeq;
   state.tree = data.tree;
   if (data.tree && data.tree.chat_id) {
     chatId = String(data.tree.chat_id);
@@ -1623,7 +1764,8 @@ async function refreshTreeData(inviteOverride = "") {
   state.botUsername = data.bot_username || "";
   state.webappUrl = data.webapp_url || window.location.origin;
   state.treeThemes = data.tree_themes || state.treeThemes;
-  state.lootboxPrice = Number(data.lootbox_price || 150);
+  state.lootboxPrice = Number(data.lootbox_price || 100);
+  if (Array.isArray(data.lootbox_pool) && data.lootbox_pool.length) state.lootboxPool = data.lootbox_pool;
   state.adventRewards = data.advent_rewards || state.adventRewards;
   state.decorations = data.decorations || [];
   state.stats = data.stats || [];
@@ -1660,11 +1802,16 @@ async function initLoadAndSync() {
     const backup = loadLocalBackup();
     if (backup) {
       const myServerDecs = state.decorations.filter((d) => d.user_id === state.myUserId);
+      // Игрушки из бэкапа восстанавливаем только если на ёлке их нет совсем И сервер
+      // не прислал ни одной (иначе получались дубли, а после удаления — «воскрешение»).
       const needSync =
         (backup.coins && backup.coins > state.coins) ||
         (backup.coin_turnover && backup.coin_turnover > state.coinTurnover) ||
         (backup.click_power && backup.click_power > state.clickPower) ||
-        (myServerDecs.length === 0 && Array.isArray(backup.decorations) && backup.decorations.length > 0);
+        (state.decorations.length === 0 &&
+          myServerDecs.length === 0 &&
+          Array.isArray(backup.decorations) &&
+          backup.decorations.length > 0);
       if (needSync) {
         const syncRes = await fetch("/api/sync", {
           method: "POST",
@@ -1798,7 +1945,8 @@ $("#adventModal").addEventListener("click", (e) => { if (e.target === $("#advent
 $("#claimDailyBtn").addEventListener("click", claimDailyAdvent);
 
 $("#openStyleModalBtn").addEventListener("click", () => {
-  renderStyleModal();
+  resetStyleDraft();
+  renderStyleModal(false);
   $("#styleModal").classList.remove("hidden");
 });
 $("#closeStyleModalBtn").addEventListener("click", () => $("#styleModal").classList.add("hidden"));

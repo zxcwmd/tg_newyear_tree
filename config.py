@@ -173,7 +173,15 @@ TREE_THEMES = {
     },
 }
 
-LOOTBOX_PRICE = 150
+# Сюрприз-бокс: фиксированная цена и публичный набор призов (показываем в слотах)
+LOOTBOX_PRICE = 100
+LOOTBOX_POOL = [
+    {"item": "gift", "coins": 40, "weight": 26, "label": "🎁 Подарок + 40 🪙"},
+    {"item": "star", "coins": 50, "weight": 24, "label": "⭐ Звезда + 50 🪙"},
+    {"item": "angel", "coins": 75, "weight": 20, "label": "👼 Ангелочек + 75 🪙"},
+    {"item": "crystal", "coins": 100, "weight": 15, "label": "💎 Кристалл + 100 🪙"},
+    {"item": "bell", "coins": 300, "weight": 15, "label": "🔔 Джекпот: Колокольчик + 300 🪙"},
+]
 
 # Донат-наборы за Telegram Stars (XTR). Оплата в GRAM отключена.
 DONATE_PACKS = {
