@@ -76,161 +76,6 @@ def _load_font(size: int):
     return ImageFont.load_default()
 
 
-EMOJI_FONT_CANDIDATES = [
-    "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
-    "/usr/share/fonts/truetype/emoji/NotoColorEmoji.ttf",
-    "/System/Library/Fonts/Apple Color Emoji.ttc",
-]
-
-
-def _load_emoji_font(size: int):
-    for path in EMOJI_FONT_CANDIDATES:
-        try:
-            return ImageFont.truetype(path, size)
-        except Exception:
-            continue
-    return None
-
-
-# Символы, которые точно есть в обычных шрифтах (DejaVu/Liberation) — их можно рисовать текстом
-SAFE_GLYPHS = "♥❤★☆❄☃✦✧✿☀☾✈✔✝☘♠♣♦♪♫☕⚑⌚✂✎✏✒✉✌✍☺☻♨⚡"
-
-# Векторные медальоны для эмодзи, которых нет в шрифтах (или если эмодзи-шрифт не установлен)
-VECTOR_ICONS = {
-    "gift": {"🎁", "🛍", "🎀"},
-    "diamond": {"💎", "💠", "🔷", "🔶"},
-    "star": {"⭐", "🌟", "✨", "🌠", "💫"},
-    "heart": {"❤", "💖", "💝", "💗", "💕", "♥"},
-    "snow": {"❄", "🌨", "⛄", "☃", "🧊"},
-    "tree": {"🎄", "🌲", "🌳"},
-    "bell": {"🔔", "🛎", "🎐"},
-    "santa": {"🎅", "🤶"},
-    "flower": {"🌹", "🌷", "🌸", "💐"},
-    "cake": {"🎂", "🍰", "🧁", "🍫"},
-    "bear": {"🧸", "🐻", "🐼"},
-    "rocket": {"🚀", "🛸"},
-    "firework": {"🎆", "🎇", "🎉", "🎊"},
-    "crown": {"👑", "🏆", "🥇", "🎖"},
-    "moon": {"🌙", "🌛", "🌜", "☾"},
-    "sun": {"☀", "🌞", "🌻"},
-}
-
-
-def _icon_kind(emoji: str, kind: str | None = None) -> str:
-    for name, chars in VECTOR_ICONS.items():
-        if emoji in chars:
-            return name
-    return "diamond" if kind in ("unique", "nft") else "gift"
-
-
-def _draw_icon_shape(draw: ImageDraw.ImageDraw, cx: float, cy: float, r: float, icon: str):
-    """Векторный медальон: ромб/подарок/звезда и т.п. Цвета новогодние."""
-    gold, gold_hi = (253, 224, 71), (255, 248, 200)
-    line = max(1, int(SCALE * 1.4))
-    if icon == "diamond":
-        d = r * 0.92
-        pts = [(cx, cy - d), (cx + d * 0.86, cy), (cx, cy + d), (cx - d * 0.86, cy)]
-        draw.polygon(pts, fill=(125, 211, 252), outline=(224, 247, 255))
-        draw.line([(cx - d * 0.86, cy), (cx + d * 0.86, cy)], fill=(224, 247, 255), width=line)
-        draw.polygon([(cx, cy - d), (cx - d * 0.4, cy), (cx + d * 0.4, cy)], fill=(186, 230, 253))
-    elif icon == "star":
-        import math
-        pts = []
-        for i in range(10):
-            ang = -math.pi / 2 + i * math.pi / 5
-            rad = r * 0.95 if i % 2 == 0 else r * 0.42
-            pts.append((cx + rad * math.cos(ang), cy + rad * math.sin(ang)))
-        draw.polygon(pts, fill=gold, outline=gold_hi)
-    elif icon == "heart":
-        import math
-        rr = r * 0.46
-        cx1, cx2 = cx - rr * 0.92, cx + rr * 0.92
-        draw.ellipse([cx1 - rr, cy - rr * 1.15, cx1 + rr, cy + rr * 0.85], fill=(251, 113, 133))
-        draw.ellipse([cx2 - rr, cy - rr * 1.15, cx2 + rr, cy + rr * 0.85], fill=(251, 113, 133))
-        pts = [(cx - math.sqrt(2) * rr * 0.98, cy + rr * 0.15),
-               (cx + math.sqrt(2) * rr * 0.98, cy + rr * 0.15),
-               (cx, cy + r * 1.02)]
-        draw.polygon(pts, fill=(251, 113, 133))
-    elif icon == "snow":
-        for i in range(6):
-            import math
-            ang = i * math.pi / 3
-            draw.line([(cx, cy), (cx + r * 0.92 * math.cos(ang), cy + r * 0.92 * math.sin(ang))],
-                      fill=(224, 247, 255), width=line)
-            # «веточки»
-            for sign in (-1, 1):
-                bx = cx + r * 0.62 * math.cos(ang)
-                by = cy + r * 0.62 * math.sin(ang)
-                ang2 = ang + sign * math.pi / 5
-                draw.line([(bx, by), (bx + r * 0.3 * math.cos(ang2), by + r * 0.3 * math.sin(ang2))],
-                          fill=(224, 247, 255), width=line)
-    elif icon == "tree":
-        draw.polygon([(cx, cy - r * 1.0), (cx - r * 0.72, cy + r * 0.45), (cx + r * 0.72, cy + r * 0.45)], fill=(74, 222, 128))
-        draw.polygon([(cx, cy - r * 0.45), (cx - r * 0.92, cy + r * 0.85), (cx + r * 0.92, cy + r * 0.85)], fill=(34, 197, 94))
-        draw.rectangle([cx - r * 0.16, cy + r * 0.75, cx + r * 0.16, cy + r * 1.05], fill=(120, 53, 15))
-    elif icon == "bell":
-        draw.pieslice([cx - r * 0.85, cy - r * 0.95, cx + r * 0.85, cy + r * 0.75], 180, 360, fill=gold)
-        draw.rectangle([cx - r * 0.85, cy - r * 0.12, cx + r * 0.85, cy + r * 0.18], fill=gold)
-        draw.ellipse([cx - r * 0.18, cy + r * 0.16, cx + r * 0.18, cy + r * 0.52], fill=gold_hi)
-    elif icon == "firework":
-        import math
-        for i in range(8):
-            ang = i * math.pi / 4
-            draw.line([(cx + r * 0.25 * math.cos(ang), cy + r * 0.25 * math.sin(ang)),
-                       (cx + r * 0.95 * math.cos(ang), cy + r * 0.95 * math.sin(ang))],
-                      fill=gold_hi if i % 2 else (251, 191, 36), width=max(1, int(SCALE * 2)))
-    else:  # gift — коробка с бантом
-        bw, bh = r * 1.5, r * 1.25
-        draw.rounded_rectangle([cx - bw / 2, cy - bh / 2 + r * 0.12, cx + bw / 2, cy + bh / 2], radius=r * 0.12, fill=(239, 68, 68))
-        draw.rectangle([cx - r * 0.16, cy - bh / 2 + r * 0.12, cx + r * 0.16, cy + bh / 2], fill=gold)
-        draw.rectangle([cx - bw / 2, cy - r * 0.05, cx + bw / 2, cy + r * 0.2], fill=gold)
-        top = cy - bh / 2 + r * 0.12
-        draw.ellipse([cx - r * 0.58, top - r * 0.02, cx - r * 0.04, top + r * 0.34], outline=gold, width=line)
-        draw.ellipse([cx + r * 0.04, top - r * 0.02, cx + r * 0.58, top + r * 0.34], outline=gold, width=line)
-
-
-def _draw_emoji(
-    img: Image.Image,
-    draw: ImageDraw.ImageDraw,
-    cx: float,
-    cy: float,
-    size: float,
-    emoji: str,
-    kind: str | None = None,
-):
-    """Эмодзи-медальон на подложке; без эмодзи-шрифта — векторный значок."""
-    r = size * 0.62
-    # Тёмный медальон-подложка с золотым ободком — общий для всех вариантов
-    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(37, 47, 74), outline=(253, 224, 71), width=max(1, int(SCALE * 1.4)))
-    # мягкий верхний блик (полупрозрачный слой, чтобы не читался белым пятном)
-    gloss = Image.new("RGBA", (int(r * 4) + 4, int(r * 4) + 4), (0, 0, 0, 0))
-    ImageDraw.Draw(gloss).ellipse(
-        [r * 2 - r * 0.62 + 2, r * 2 - r * 0.82 + 2, r * 2 + r * 0.1 + 2, r * 2 - r * 0.04 + 2],
-        fill=(255, 255, 255, 26),
-    )
-    gloss = gloss.filter(ImageFilter.GaussianBlur(max(1, int(SCALE * 2))))
-    img.alpha_composite(gloss, (int(cx - r * 2 - 2), int(cy - r * 2 - 2)))
-
-    font = _load_emoji_font(int(size))
-    if font is not None:
-        try:
-            bbox = draw.textbbox((0, 0), emoji, font=font, embedded_color=True)
-            w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            draw.text((cx - w / 2, cy - h / 2 - bbox[1]), emoji, font=font, embedded_color=True)
-            return
-        except Exception:
-            pass
-
-    # Без эмодзи-шрифта: простые символы рисуем текстом, остальное — вектором
-    if len(emoji) == 1 and emoji in SAFE_GLYPHS and ord(emoji) < 0x3000:
-        f = _load_font(int(size * 0.78))
-        bbox = draw.textbbox((0, 0), emoji, font=f)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        draw.text((cx - tw / 2, cy - th / 2 - bbox[1]), emoji, font=f, fill=(255, 241, 176))
-        return
-    _draw_icon_shape(draw, cx, cy, r * 0.66, _icon_kind(emoji, kind))
-
-
 def _s(v: float) -> float:
     """Пересчёт координат из итогового масштаба в рабочее разрешение."""
     return v * SCALE
@@ -349,20 +194,6 @@ def _hill(img: Image.Image, base_y: float, amp: float, waves, top_color, bottom_
     return pts
 
 
-def _tree_mask() -> Image.Image:
-    """Маска силуэта ёлки (все три яруса) — для снега и подсветки по форме."""
-    mask = Image.new("L", (SW, SH), 0)
-    md = ImageDraw.Draw(mask)
-    cx = _s(400)
-    for top, bottom, hbot, teeth in (
-        (_s(70), _s(420), _s(152), 7),
-        (_s(258), _s(628), _s(214), 8),
-        (_s(444), _s(858), _s(288), 9),
-    ):
-        md.polygon(_pine_tier(cx, top, bottom, hbot, teeth), fill=255)
-    return mask.filter(ImageFilter.GaussianBlur(_s(1.2)))
-
-
 def _draw_ground(img: Image.Image, draw: ImageDraw.ImageDraw):
     """Сугробы с плавными силуэтами, искрами и тенью под ёлкой."""
     # Мягкое холодное свечение у горизонта
@@ -404,7 +235,7 @@ def _draw_ground(img: Image.Image, draw: ImageDraw.ImageDraw):
     # Тень под ёлкой
     shadow = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
     sd = ImageDraw.Draw(shadow)
-    sd.ellipse([_s(112), _s(872), _s(688), _s(944)], fill=(12, 26, 52, 120))
+    sd.ellipse([_s(200), _s(884), _s(600), _s(940)], fill=(12, 26, 52, 95))
     shadow = shadow.filter(ImageFilter.GaussianBlur(_s(18)))
     img.alpha_composite(shadow)
 
@@ -622,9 +453,28 @@ def _draw_trunk(img: Image.Image, draw: ImageDraw.ImageDraw):
     # Объём ствола: блик слева, тень справа
     draw.rectangle([x0 + _s(6), y0, x0 + _s(20), y1], fill=_lighten(TRUNK, 0.18))
     draw.rectangle([x1 - _s(18), y0, x1 - _s(4), y1], fill=_darken(TRUNK, 0.32))
-    # Снег у основания
-    draw.ellipse([x0 - _s(16), y1 - _s(16), x1 + _s(16), y1 + _s(12)], fill=(250, 252, 255))
-    draw.ellipse([x0 - _s(4), y1 - _s(22), x1 + _s(2), y1 - _s(4)], fill=(255, 255, 255))
+    # Снег у основания ствола: компактный округлый холмик
+    rnd_snow = random.Random(17)
+    cx_base = (x0 + x1) / 2
+    hump = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
+    ImageDraw.Draw(hump).ellipse(
+        [cx_base - _s(30), y1 - _s(6), cx_base + _s(30), y1 + _s(14)], fill=(178, 201, 231, 70)
+    )
+    hump = hump.filter(ImageFilter.GaussianBlur(_s(5)))
+    img.alpha_composite(hump)
+    # Три «кома»: широкая база + два бугорка сверху, свет падает слева.
+    # База доходит до низа ствола, чтобы не оставалось тёмных «ножек».
+    draw.ellipse([cx_base - _s(38), y1 - _s(22), cx_base + _s(38), y1 + _s(15)], fill=(228, 240, 253))
+    draw.ellipse([cx_base - _s(32), y1 - _s(32), cx_base + _s(16), y1 + _s(11)], fill=(244, 250, 255))
+    draw.ellipse([cx_base - _s(12), y1 - _s(29), cx_base + _s(32), y1 + _s(11)], fill=(238, 247, 255))
+    draw.ellipse([cx_base - _s(24), y1 - _s(36), cx_base + _s(6), y1 - _s(4)], fill=(252, 254, 255))
+    draw.ellipse([cx_base - _s(15), y1 - _s(38), cx_base + _s(0), y1 - _s(14)], fill=(255, 255, 255))
+    # Искры на снегу у ствола
+    for _ in range(8):
+        sx_ = rnd_snow.uniform(cx_base - _s(26), cx_base + _s(26))
+        sy_ = rnd_snow.uniform(y1 - _s(16), y1 + _s(4))
+        sr = rnd_snow.uniform(0.7, 1.4) * SCALE
+        draw.ellipse([sx_ - sr, sy_ - sr, sx_ + sr, sy_ + sr], fill=(255, 255, 255, 230))
 
 
 def _draw_tree(img: Image.Image, draw: ImageDraw.ImageDraw):
