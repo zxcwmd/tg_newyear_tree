@@ -151,39 +151,102 @@ const SEGMENTS_VB = {
 };
 
 let currentVB = { ...SEGMENTS_VB.all };
+let vbVel = { x: 0, y: 0, w: 0, h: 0 };
 let vbAnimFrame = null;
+let vbLastTime = 0;
+let vbTarget = { ...SEGMENTS_VB.all };
 
-function setTreeSegment(segKey) {
+// Пружинная интерполяция: значения «доезжают» до цели без рывка на старте,
+// с лёгким перелётом и мягкой остановкой. Скорость ограничена через dt,
+// чтобы на медленном устройстве камера не прыгала.
+const VB_STIFFNESS = 180;
+const VB_DAMPING = 26;
+
+function updateSegmentIndicator(segKey) {
+  const bar = $(".segment-bar");
+  const active = document.querySelector(`.seg-btn[data-seg="${segKey}"]`);
+  if (!bar || !active) return;
+  let ink = bar.querySelector(".segment-ink");
+  if (!ink) {
+    ink = document.createElement("span");
+    ink.className = "segment-ink";
+    bar.appendChild(ink);
+  }
+  const barRect = bar.getBoundingClientRect();
+  const btnRect = active.getBoundingClientRect();
+  // Позиция относительно внутренней области (без учёта padding)
+  const left = btnRect.left - barRect.left - bar.clientLeft;
+  ink.style.width = `${btnRect.width}px`;
+  ink.style.transform = `translateX(${left}px)`;
+  ink.classList.add("ready");
+}
+
+function setTreeSegment(segKey, options = {}) {
   const target = SEGMENTS_VB[segKey] || SEGMENTS_VB.all;
+  const changed = state.activeSegment !== segKey || options.force;
   state.activeSegment = segKey;
-  $$(".seg-btn").forEach((b) => b.classList.toggle("active", b.dataset.seg === segKey));
-  haptic("light");
+  $$(".seg-btn").forEach((b) => {
+    const on = b.dataset.seg === segKey;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+  updateSegmentIndicator(segKey);
+  if (options.haptic !== false) haptic("light");
 
-  if (vbAnimFrame) cancelAnimationFrame(vbAnimFrame);
-  const startVB = { ...currentVB };
-  const startTime = performance.now();
-  const duration = 260;
+  vbTarget = { ...target };
 
-  function step(now) {
-    const t = Math.min(1, (now - startTime) / duration);
-    const ease = 1 - Math.pow(1 - t, 3);
-    currentVB.x = startVB.x + (target.x - startVB.x) * ease;
-    currentVB.y = startVB.y + (target.y - startVB.y) * ease;
-    currentVB.w = startVB.w + (target.w - startVB.w) * ease;
-    currentVB.h = startVB.h + (target.h - startVB.h) * ease;
+  // Если анимация уже идёт — просто меняем цель. Скорость сохраняется,
+  // поэтому быстрые клики по секторам не дают рывков.
+  if (vbAnimFrame) return;
+  if (!changed && !options.force) return;
+
+  vbLastTime = performance.now();
+  const step = (now) => {
+    const dt = Math.min(0.05, Math.max(0.001, (now - vbLastTime) / 1000));
+    vbLastTime = now;
+
+    // Демпфированная пружина для каждой координаты камеры
+    let settled = true;
+    for (const k of ["x", "y", "w", "h"]) {
+      const delta = vbTarget[k] - currentVB[k];
+      vbVel[k] += (delta * VB_STIFFNESS - vbVel[k] * VB_DAMPING) * dt;
+      currentVB[k] += vbVel[k] * dt;
+      if (Math.abs(delta) > 0.02 || Math.abs(vbVel[k]) > 0.02) settled = false;
+    }
+
     treeSvg.setAttribute(
       "viewBox",
-      `${currentVB.x.toFixed(1)} ${currentVB.y.toFixed(1)} ${currentVB.w.toFixed(1)} ${currentVB.h.toFixed(1)}`
+      `${currentVB.x.toFixed(2)} ${currentVB.y.toFixed(2)} ${currentVB.w.toFixed(2)} ${currentVB.h.toFixed(2)}`
     );
-    if (t < 1) {
-      vbAnimFrame = requestAnimationFrame(step);
+
+    if (settled) {
+      // Дотягиваем до цели ровно и отпускаем кадр
+      for (const k of ["x", "y", "w", "h"]) {
+        currentVB[k] = vbTarget[k];
+        vbVel[k] = 0;
+      }
+      treeSvg.setAttribute(
+        "viewBox",
+        `${currentVB.x.toFixed(1)} ${currentVB.y.toFixed(1)} ${currentVB.w.toFixed(1)} ${currentVB.h.toFixed(1)}`
+      );
+      vbAnimFrame = null;
+      return;
     }
-  }
+    vbAnimFrame = requestAnimationFrame(step);
+  };
   vbAnimFrame = requestAnimationFrame(step);
 }
 
 $$(".seg-btn").forEach((btn) => {
   btn.addEventListener("click", () => setTreeSegment(btn.dataset.seg));
+});
+
+// Индикатор должен стоять на месте и после ресайза/поворота экрана
+window.addEventListener("resize", () => {
+  const ink = document.querySelector(".segment-ink");
+  if (ink) ink.classList.add("no-anim");
+  updateSegmentIndicator(state.activeSegment || "all");
+  requestAnimationFrame(() => document.querySelector(".segment-ink")?.classList.remove("no-anim"));
 });
 
 // ============================================================================
@@ -762,7 +825,7 @@ function getGarlandColors() {
   return ["#fde047", "#f43f5e", "#38bdf8", "#34d399", "#c084fc"];
 }
 
-function drawGarlandLights() {
+function drawGarlandLights(animate = false) {
   const g = $("#garlandLights");
   g.innerHTML = "";
   const colors = getGarlandColors();
@@ -786,15 +849,27 @@ function drawGarlandLights() {
         class: "garland-bulb",
         style: `animation-delay: ${(idx * 0.23).toFixed(2)}s`,
       });
+      if (animate) {
+        bulb.style.opacity = "0";
+        requestAnimationFrame(() => {
+          bulb.style.transition = `opacity 0.35s ease ${(idx * 0.02).toFixed(2)}s`;
+          bulb.style.opacity = "1";
+        });
+      }
       g.appendChild(bulb);
       idx++;
     }
   }
 }
 
-function drawTopStar() {
+function drawTopStar(animate = false) {
   const g = $("#topStar");
   g.innerHTML = "";
+  if (animate) {
+    g.style.opacity = "0";
+    g.style.transition = "opacity 0.4s ease";
+    requestAnimationFrame(() => { g.style.opacity = "1"; });
+  }
   const topper = state.tree?.topper_type || "star";
   g.appendChild(svgEl("circle", { cx: 200, cy: 48, r: 28, fill: "#fde047", opacity: 0.22, filter: "url(#glowFilter)" }));
   if (topper === "crown") {
@@ -827,19 +902,61 @@ function drawTopStar() {
   }
 }
 
+// Плавная смена палитры неба: CSS-переход по stop-color, чтобы тема
+// не «щёлкала» при переключении варианта в модалке.
+function animateSkyTo(theme) {
+  const stops = document.querySelectorAll("#skyGrad stop");
+  if (stops.length < 3 || !theme) return;
+  const targets = [theme.top || "#050b1a", theme.mid || "#0d1b3a", theme.bot || "#172a4f"];
+  stops.forEach((stop, i) => {
+    const current = (stop.getAttribute("stop-color") || "").toLowerCase();
+    if (current === targets[i].toLowerCase()) return;
+    // CSS-свойство stop-color анимируется плавно (переход задан в style.css),
+    // атрибут дублируем, чтобы значение было видно и без поддержки transition.
+    try { stop.style.stopColor = targets[i]; } catch (e) {}
+    stop.setAttribute("stop-color", targets[i]);
+  });
+}
+
 function applyTreeTheme() {
   const bgKey = state.tree?.bg_theme || "aurora";
   const theme = state.treeThemes?.backgrounds?.[bgKey];
-  if (theme) {
-    const stops = document.querySelectorAll("#skyGrad stop");
-    if (stops.length >= 3) {
-      stops[0].setAttribute("stop-color", theme.top || "#050b1a");
-      stops[1].setAttribute("stop-color", theme.mid || "#0d1b3a");
-      stops[2].setAttribute("stop-color", theme.bot || "#172a4f");
-    }
-  }
+  animateSkyTo(theme);
   drawGarlandLights();
   drawTopStar();
+}
+
+// Живой предпросмотр стиля прямо на ёлке: не сохраняем на сервер,
+// а подменяем тему в состоянии и перерисовываем с плавным переходом.
+function previewStyleDraft() {
+  if (!state.styleDraft) return;
+  const draft = state.styleDraft;
+  // Рисуем превью по черновику: функции ниже читают именно эти ключи.
+  // Сохранённое состояние не трогаем — после закрытия модалки без «Сохранить»
+  // ёлка вернётся к прежнему виду через restoreTreeTheme().
+  const preview = {
+    ...(state.tree || {}),
+    bg_theme: draft.bg_theme,
+    garland_style: draft.garland_style,
+    topper_type: draft.topper_type,
+  };
+  const painted = state.tree;
+  state.tree = preview;
+  try {
+    animateSkyTo(state.treeThemes?.backgrounds?.[draft.bg_theme]);
+    drawGarlandLights(true);
+    drawTopStar(true);
+  } finally {
+    state.tree = painted;
+  }
+}
+
+// Возврат ёлки к сохранённому стилю (закрытие модалки без сохранения)
+function restoreTreeTheme() {
+  const theme = state.treeThemes?.backgrounds?.[state.tree?.bg_theme || "aurora"];
+  animateSkyTo(theme);
+  drawGarlandLights(true);
+  drawTopStar(true);
 }
 
 function starShape(cx, cy, r, fillColor, strokeColor = "#b45309") {
@@ -944,6 +1061,11 @@ function ornamentShape(type, colorName, colorHex, x, y) {
   return g;
 }
 
+// Какие игрушки уже показывали — чтобы анимация «падения» срабатывала
+// только у новых, а не при каждом обновлении ёлки раз в 12 секунд.
+const seenDecorations = new Set();
+let decorationsRendered = false;
+
 function renderDecorations() {
   decorLayer.innerHTML = "";
   for (const d of state.decorations) {
@@ -952,6 +1074,10 @@ function renderDecorations() {
     const y = (d.y / 100) * 500;
     const el = ornamentShape(d.ornament_type, d.color, colorHex, x, y);
     el.dataset.id = d.id;
+    if (decorationsRendered && !seenDecorations.has(String(d.id))) {
+      el.classList.add("dec-new");
+    }
+    seenDecorations.add(String(d.id));
     // Индикатор пожелания 💌
     if (d.wish_text && String(d.wish_text).trim()) {
       const badge = svgEl("text", {
@@ -1009,6 +1135,7 @@ function renderDecorations() {
     decorLayer.appendChild(el);
   }
   $("#counter").textContent = `✨ На ёлке: ${state.decorations.length}`;
+  decorationsRendered = true;
 }
 
 async function saveMoveDecoration(decorationId, x, y) {
@@ -1926,9 +2053,18 @@ $("#openStyleModalBtn").addEventListener("click", () => {
   resetStyleDraft();
   renderStyleModal(false);
   $("#styleModal").classList.remove("hidden");
+  haptic("light");
 });
-$("#closeStyleModalBtn").addEventListener("click", () => $("#styleModal").classList.add("hidden"));
-$("#styleModal").addEventListener("click", (e) => { if (e.target === $("#styleModal")) $("#styleModal").classList.add("hidden"); });
+$("#closeStyleModalBtn").addEventListener("click", () => {
+  $("#styleModal").classList.add("hidden");
+  restoreTreeTheme();
+});
+$("#styleModal").addEventListener("click", (e) => {
+  if (e.target === $("#styleModal")) {
+    $("#styleModal").classList.add("hidden");
+    restoreTreeTheme();
+  }
+});
 $("#saveStyleBtn").addEventListener("click", saveTreeStyle);
 
 $("#shareReferralBtn").addEventListener("click", shareReferral);
