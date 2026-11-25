@@ -1627,3 +1627,143 @@ header h1 {
 .team-share-row.hidden {
   display: none;
 }
+
+/* ==========================================================================
+   v9: слот-машина Сюрприз-бокса
+   ========================================================================== */
+.slot-strip {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 10px 0 12px;
+}
+
+.slot-mini {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 12px;
+  background: rgba(2, 6, 23, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  min-width: 54px;
+}
+
+.slot-mini .slot-emoji {
+  font-size: 19px;
+  line-height: 1;
+}
+
+.slot-mini .slot-coins {
+  font-size: 10px;
+  font-weight: 800;
+  color: #fde047;
+}
+
+.lootbox-modal-card {
+  max-width: 400px;
+}
+
+.slot-machine {
+  position: relative;
+  padding: 10px;
+  border-radius: 18px;
+  background: linear-gradient(160deg, #1e1b4b, #4c1d95 60%, #7c2d12);
+  box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.55), 0 8px 22px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(253, 224, 71, 0.35);
+}
+
+.slot-frame {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.slot-window {
+  position: relative;
+  height: 58px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: rgba(2, 6, 23, 0.82);
+  border: 1px solid rgba(253, 224, 71, 0.28);
+  box-shadow: inset 0 6px 12px rgba(0, 0, 0, 0.65);
+}
+
+.slot-window::before,
+.slot-window::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 12px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.slot-window::before {
+  top: 0;
+  background: linear-gradient(rgba(2, 6, 23, 0.9), transparent);
+}
+
+.slot-window::after {
+  bottom: 0;
+  background: linear-gradient(transparent, rgba(2, 6, 23, 0.9));
+}
+
+.slot-reel {
+  will-change: transform;
+}
+
+.slot-cell {
+  height: 58px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+}
+
+.slot-cell .slot-emoji {
+  font-size: 21px;
+  line-height: 1;
+}
+
+.slot-cell .slot-coins {
+  font-size: 9.5px;
+  font-weight: 800;
+  color: #a5f3fc;
+}
+
+.slot-payline {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 50%;
+  height: 2px;
+  margin-top: -1px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, rgba(253, 224, 71, 0.85), transparent);
+  pointer-events: none;
+}
+
+.lootbox-modal-card.won .slot-frame {
+  animation: slot-win-pulse 0.7s ease-out 2;
+}
+
+@keyframes slot-win-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.45) drop-shadow(0 0 10px rgba(253, 224, 71, 0.85)); }
+}
+
+#closeLootboxModalBtn:disabled {
+  opacity: 0.4;
+}
+
+/* v9: имя в топе + подпись @username под ним */
+.lb-handle {
+  font-size: 10.5px;
+  color: #64748b;
+  margin-top: 1px;
+}

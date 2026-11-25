@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Новогодняя ёлка 🎄</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=8">
+<link rel="stylesheet" href="/static/style.css?v=9">
 </head>
 <body>
 <canvas id="bgCanvas"></canvas>
@@ -464,23 +464,31 @@
     </div>
   </div>
 
-  <!-- Модалка результата Сюрприз-бокса -->
+  <!-- Модалка Сюрприз-бокса: слот-машина с призами -->
   <div id="lootboxModal" class="modal hidden">
-    <div class="modal-card glass-panel">
+    <div class="modal-card glass-panel lootbox-modal-card">
       <div class="modal-header">
-        <span>🎰 Твой приз!</span>
+        <span>🎰 Сюрприз-бокс — 100 🪙</span>
         <button id="closeLootboxModalBtn" class="close-btn" type="button">✕</button>
       </div>
       <div class="lootbox-body">
-        <div id="lootboxPrizeEmoji" class="lootbox-prize-emoji">🎁</div>
-        <div id="lootboxPrizeText" class="lootbox-prize-text"></div>
-        <button id="lootboxOkBtn" class="primary-btn" type="button" style="width:100%; margin-top:14px;">Забрать приз 🎉</button>
+        <div class="slot-machine">
+          <div class="slot-frame">
+            <div class="slot-window"><div id="slotReel1" class="slot-reel"></div></div>
+            <div class="slot-window"><div id="slotReel2" class="slot-reel"></div></div>
+            <div class="slot-window"><div id="slotReel3" class="slot-reel"></div></div>
+          </div>
+          <div class="slot-payline"></div>
+        </div>
+        <div id="lootboxPrizeEmoji" class="lootbox-prize-emoji">🎰</div>
+        <div id="lootboxPrizeText" class="lootbox-prize-text">Крутим слоты…</div>
+        <button id="lootboxOkBtn" class="primary-btn" type="button" style="width:100%; margin-top:14px;" disabled>Крутим…</button>
       </div>
     </div>
   </div>
 
   <div id="toast" class="toast"></div>
 </div>
-<script src="/static/app.js?v=8"></script>
+<script src="/static/app.js?v=9"></script>
 </body>
 </html>
